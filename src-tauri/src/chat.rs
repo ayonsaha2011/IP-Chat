@@ -171,13 +171,38 @@ impl ChatManager {
         }
 
         // Send message to peer
-        self.send_message_to_peer(peer_id, &message).await?;
+        self.send_message_to_peer(peer_id, &message, None).await?;
+
+        Ok(message)
+    }
+
+    /// Sends a message to a peer with a specific IP
+    pub async fn send_message_with_peer_ip(&mut self, peer_id: &str, content: &str, peer_ip: &str) -> AppResult<Message> {
+        // Create message
+        let message = Message {
+            id: Uuid::new_v4().to_string(),
+            sender_id: self.local_user.id.clone(),
+            recipient_id: peer_id.to_string(),
+            content: content.to_string(),
+            timestamp: chrono::Utc::now(),
+            read: false,
+        };
+
+        // Store message
+        {
+            let mut messages = self.messages.lock().unwrap();
+            let peer_messages = messages.entry(peer_id.to_string()).or_default();
+            peer_messages.push(message.clone());
+        }
+
+        // Send message to peer
+        self.send_message_to_peer(peer_id, &message, Some(peer_ip)).await?;
 
         Ok(message)
     }
 
     /// Sends a message to a peer over the network
-    async fn send_message_to_peer(&self, peer_id: &str, message: &Message) -> AppResult<()> {
+    async fn send_message_to_peer(&self, peer_id: &str, message: &Message, peer_ip: Option<&str>) -> AppResult<()> {
         // Check if we have a connection to the peer
         let peer_addr = {
             let connections = self.connections.lock().unwrap();
@@ -186,25 +211,37 @@ impl ChatManager {
                 .map(|stream| stream.peer_addr().ok())
         };
 
-        if let Some(Some(addr)) = peer_addr {
-            // We have a connection, send the message
-            let message_json =
-                serde_json::to_string(message).map_err(AppError::SerializationError)?;
-
-            let mut stream = AsyncTcpStream::connect(addr)
-                .await
-                .map_err(|e| AppError::NetworkError(format!("Failed to connect to peer: {e}")))?;
-
-            stream
-                .write_all(message_json.as_bytes())
-                .await
-                .map_err(|e| AppError::NetworkError(format!("Failed to send message: {e}")))?;
-
-            Ok(())
+        let target_addr = if let Some(Some(addr)) = peer_addr {
+            // We have an existing connection
+            addr
+        } else if let Some(ip) = peer_ip {
+            // Use the provided IP address to establish a new connection
+            format!("{}:{}", ip, CHAT_PORT).parse()
+                .map_err(|e| AppError::NetworkError(format!("Invalid peer address: {e}")))?
         } else {
-            // No connection to the peer, try to establish one
-            Err(AppError::NetworkError("No connection to peer".to_string()))
-        }
+            // No connection and no IP provided
+            return Err(AppError::NetworkError("No connection to peer and no IP address provided".to_string()));
+        };
+
+        // Send the message
+        let message_json =
+            serde_json::to_string(message).map_err(AppError::SerializationError)?;
+
+        let mut stream = AsyncTcpStream::connect(target_addr)
+            .await
+            .map_err(|e| AppError::NetworkError(format!("Failed to connect to peer: {e}")))?;
+
+        stream
+            .write_all(message_json.as_bytes())
+            .await
+            .map_err(|e| AppError::NetworkError(format!("Failed to send message: {e}")))?;
+
+        stream
+            .flush()
+            .await
+            .map_err(|e| AppError::NetworkError(format!("Failed to flush message: {e}")))?;
+
+        Ok(())
     }
 
     /// Gets messages for a specific peer

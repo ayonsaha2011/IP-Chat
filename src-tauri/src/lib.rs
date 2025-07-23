@@ -115,9 +115,26 @@ async fn send_message(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Message, String> {
     let mut state = state.lock().await;
-    match state.chat_manager.send_message(&peer_id, &content).await {
-        Ok(message) => Ok(message),
-        Err(e) => Err(e.to_string()),
+    
+    // Get peer information from discovery service
+    let peers = state.discovery.get_discovered_peers();
+    let peer = peers.iter().find(|p| p.id == peer_id);
+    
+    match peer {
+        Some(peer) => {
+            // Send message with peer IP
+            match state.chat_manager.send_message_with_peer_ip(&peer_id, &content, &peer.ip).await {
+                Ok(message) => Ok(message),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        None => {
+            // Fallback to regular send message (for local testing or cached peers)
+            match state.chat_manager.send_message(&peer_id, &content).await {
+                Ok(message) => Ok(message),
+                Err(e) => Err(format!("Peer not found in discovery and regular send failed: {e}")),
+            }
+        }
     }
 }
 
