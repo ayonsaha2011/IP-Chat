@@ -7,6 +7,7 @@ use crate::file_transfer::FileTransferManager;
 
 /// Represents a user in the network
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct User {
     /// Unique identifier for the user
     pub id: String,
@@ -20,6 +21,7 @@ pub struct User {
 
 /// Represents a chat message
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Message {
     /// Unique identifier for the message
     pub id: String,
@@ -54,6 +56,7 @@ pub enum TransferStatus {
 
 /// Represents a file transfer
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct FileTransfer {
     /// Unique identifier for the transfer
     pub id: String,

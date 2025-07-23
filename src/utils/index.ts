@@ -9,8 +9,20 @@ import { TransferStatus, Message, User, Conversation } from '../types';
  * @returns Formatted date string
  */
 export function formatDate(date: string | Date, formatStr: string = 'PPp'): string {
-  const dateObj = typeof date === 'string' ? new Date(date) : date;
-  return format(dateObj, formatStr);
+  try {
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    
+    // Check if the date is valid
+    if (isNaN(dateObj.getTime())) {
+      console.warn('Invalid date value:', date);
+      return 'Invalid Date';
+    }
+    
+    return format(dateObj, formatStr);
+  } catch (error) {
+    console.error('Error formatting date:', error, 'Date:', date);
+    return 'Invalid Date';
+  }
 }
 
 /**
@@ -19,8 +31,20 @@ export function formatDate(date: string | Date, formatStr: string = 'PPp'): stri
  * @returns Relative time string
  */
 export function formatRelativeTime(date: string | Date): string {
-  const dateObj = typeof date === 'string' ? new Date(date) : date;
-  return formatDistanceToNow(dateObj, { addSuffix: true });
+  try {
+    const dateObj = typeof date === 'string' ? new Date(date) : date;
+    
+    // Check if the date is valid
+    if (isNaN(dateObj.getTime())) {
+      console.warn('Invalid date value:', date);
+      return 'Unknown';
+    }
+    
+    return formatDistanceToNow(dateObj, { addSuffix: true });
+  } catch (error) {
+    console.error('Error formatting relative time:', error, 'Date:', date);
+    return 'Unknown';
+  }
 }
 
 /**
