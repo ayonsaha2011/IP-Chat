@@ -116,19 +116,31 @@ async fn send_message(
 ) -> Result<Message, String> {
     let mut state = state.lock().await;
     
+    info!("Attempting to send message to peer: {}", peer_id);
+    
     // Get peer information from discovery service
     let peers = state.discovery.get_discovered_peers();
+    info!("Found {} discovered peers", peers.len());
+    
     let peer = peers.iter().find(|p| p.id == peer_id);
     
     match peer {
         Some(peer) => {
+            info!("Found peer {} at IP: {}", peer_id, peer.ip);
             // Send message with peer IP
             match state.chat_manager.send_message_with_peer_ip(&peer_id, &content, &peer.ip).await {
-                Ok(message) => Ok(message),
-                Err(e) => Err(e.to_string()),
+                Ok(message) => {
+                    info!("Message sent successfully");
+                    Ok(message)
+                },
+                Err(e) => {
+                    error!("Failed to send message: {}", e);
+                    Err(e.to_string())
+                },
             }
         }
         None => {
+            error!("Peer {} not found in discovered peers", peer_id);
             // Fallback to regular send message (for local testing or cached peers)
             match state.chat_manager.send_message(&peer_id, &content).await {
                 Ok(message) => Ok(message),

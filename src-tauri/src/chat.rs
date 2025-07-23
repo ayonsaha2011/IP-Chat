@@ -42,74 +42,41 @@ impl ChatManager {
     }
 
     /// Starts the chat service
-    #[allow(dead_code)]
     pub fn start_chat_service(&mut self) -> AppResult<()> {
-        // Bind to the chat port
-        let listener = TcpListener::bind(format!("0.0.0.0:{CHAT_PORT}")).map_err(|e| {
-            AppError::NetworkError(format!("Failed to bind to port {CHAT_PORT}: {e}"))
-        })?;
-
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| AppError::NetworkError(format!("Failed to set non-blocking mode: {e}")))?;
-
-        // Set up channel for stopping the service
-        let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-
-        // Store listener and stop channel
-        self.listener = Some(listener);
-        self.stop_tx = Some(stop_tx);
-
-        // Clone necessary values for the task
-        let listener = self
-            .listener
-            .as_ref()
-            .unwrap()
-            .try_clone()
-            .map_err(|e| AppError::NetworkError(format!("Failed to clone listener: {e}")))?;
+        use tokio::net::TcpListener as AsyncTcpListener;
+        
         let messages = Arc::clone(&self.messages);
-        let connections = Arc::clone(&self.connections);
         let local_user = self.local_user.clone();
 
-        // Spawn task to handle incoming connections
+        // Spawn async task to handle incoming connections
         tokio::spawn(async move {
-            let listener = listener;
+            // Bind to the chat port
+            let listener = match AsyncTcpListener::bind(format!("0.0.0.0:{CHAT_PORT}")).await {
+                Ok(listener) => {
+                    info!("Chat service listening on port {CHAT_PORT}");
+                    listener
+                }
+                Err(e) => {
+                    error!("Failed to bind to port {CHAT_PORT}: {e}");
+                    return;
+                }
+            };
 
             loop {
-                // Check for stop signal
-                if stop_rx.try_recv().is_ok() {
-                    debug!("Stopping chat service");
-                    break;
-                }
-
-                // Accept incoming connections
-                match listener.accept() {
+                match listener.accept().await {
                     Ok((stream, addr)) => {
-                        debug!("New connection from: {addr}");
+                        debug!("New chat connection from: {addr}");
 
                         // Clone necessary values for the connection handler
                         let messages_clone = Arc::clone(&messages);
-                        let connections_clone = Arc::clone(&connections);
                         let local_user_clone = local_user.clone();
 
                         // Spawn task to handle the connection
                         tokio::spawn(async move {
-                            if let Err(e) = handle_connection(
-                                stream,
-                                addr,
-                                messages_clone,
-                                connections_clone,
-                                local_user_clone,
-                            )
-                            .await
-                            {
-                                error!("Error handling connection: {e}");
+                            if let Err(e) = handle_incoming_message(stream, messages_clone, local_user_clone).await {
+                                error!("Error handling incoming message: {e}");
                             }
                         });
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // No incoming connections, sleep a bit
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     }
                     Err(e) => {
                         error!("Error accepting connection: {e}");
@@ -117,10 +84,6 @@ impl ChatManager {
                     }
                 }
             }
-
-            // Close all connections
-            let mut connections = connections.lock().unwrap();
-            connections.clear();
         });
 
         info!("Chat service started");
@@ -128,7 +91,6 @@ impl ChatManager {
     }
 
     /// Stops the chat service
-    #[allow(dead_code)]
     pub fn stop_chat_service(&mut self) -> AppResult<()> {
         // Send stop signal
         if let Some(tx) = &self.stop_tx {
@@ -202,34 +164,24 @@ impl ChatManager {
     }
 
     /// Sends a message to a peer over the network
-    async fn send_message_to_peer(&self, peer_id: &str, message: &Message, peer_ip: Option<&str>) -> AppResult<()> {
-        // Check if we have a connection to the peer
-        let peer_addr = {
-            let connections = self.connections.lock().unwrap();
-            connections
-                .get(peer_id)
-                .map(|stream| stream.peer_addr().ok())
+    async fn send_message_to_peer(&self, _peer_id: &str, message: &Message, peer_ip: Option<&str>) -> AppResult<()> {
+        let target_addr = if let Some(ip) = peer_ip {
+            // Use the provided IP address to establish a new connection
+            format!("{}:{}", ip, CHAT_PORT)
+        } else {
+            // No IP provided
+            return Err(AppError::NetworkError("No IP address provided for peer".to_string()));
         };
 
-        let target_addr = if let Some(Some(addr)) = peer_addr {
-            // We have an existing connection
-            addr
-        } else if let Some(ip) = peer_ip {
-            // Use the provided IP address to establish a new connection
-            format!("{}:{}", ip, CHAT_PORT).parse()
-                .map_err(|e| AppError::NetworkError(format!("Invalid peer address: {e}")))?
-        } else {
-            // No connection and no IP provided
-            return Err(AppError::NetworkError("No connection to peer and no IP address provided".to_string()));
-        };
+        info!("Sending message to {}: {}", target_addr, message.content);
 
         // Send the message
         let message_json =
             serde_json::to_string(message).map_err(AppError::SerializationError)?;
 
-        let mut stream = AsyncTcpStream::connect(target_addr)
+        let mut stream = AsyncTcpStream::connect(&target_addr)
             .await
-            .map_err(|e| AppError::NetworkError(format!("Failed to connect to peer: {e}")))?;
+            .map_err(|e| AppError::NetworkError(format!("Failed to connect to {}: {e}", target_addr)))?;
 
         stream
             .write_all(message_json.as_bytes())
@@ -241,6 +193,7 @@ impl ChatManager {
             .await
             .map_err(|e| AppError::NetworkError(format!("Failed to flush message: {e}")))?;
 
+        info!("Message sent successfully to {}", target_addr);
         Ok(())
     }
 
@@ -271,19 +224,12 @@ impl ChatManager {
     }
 }
 
-/// Handles an incoming connection
-#[allow(dead_code)]
-async fn handle_connection(
-    stream: TcpStream,
-    _addr: SocketAddr,
+/// Handles an incoming message
+async fn handle_incoming_message(
+    mut stream: AsyncTcpStream,
     messages: Arc<Mutex<HashMap<String, Vec<Message>>>>,
-    connections: Arc<Mutex<HashMap<String, TcpStream>>>,
     _local_user: User,
 ) -> AppResult<()> {
-    // Convert to async stream
-    let mut stream = AsyncTcpStream::from_std(stream)
-        .map_err(|e| AppError::NetworkError(format!("Failed to convert stream: {e}")))?;
-
     // Read message
     let mut buffer = Vec::new();
     stream
@@ -294,19 +240,13 @@ async fn handle_connection(
     // Parse message
     let message: Message = serde_json::from_slice(&buffer).map_err(AppError::SerializationError)?;
 
-    debug!("Received message: {message:?}");
+    info!("Received message from {}: {}", message.sender_id, message.content);
 
     // Store message
     {
         let mut messages = messages.lock().unwrap();
         let peer_messages = messages.entry(message.sender_id.clone()).or_default();
         peer_messages.push(message.clone());
-    }
-
-    // Store connection
-    {
-        let mut connections = connections.lock().unwrap();
-        connections.insert(message.sender_id.clone(), stream.into_std().unwrap());
     }
 
     Ok(())
