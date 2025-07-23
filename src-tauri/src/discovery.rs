@@ -1,6 +1,5 @@
-use log::{debug, error, info, warn};
+use log::{debug, info, warn};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
-use serde_json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -28,6 +27,20 @@ pub struct NetworkDiscovery {
     is_running: Arc<Mutex<bool>>,
     /// Channel for stopping discovery
     stop_tx: Option<mpsc::Sender<()>>,
+}
+
+impl Drop for NetworkDiscovery {
+    fn drop(&mut self) {
+        // Set running flag to false to stop background threads
+        if let Ok(mut is_running) = self.is_running.lock() {
+            *is_running = false;
+        }
+
+        // Unregister service if daemon exists
+        if let Some(daemon) = &self.daemon {
+            let _ = daemon.unregister(&self.service_name);
+        }
+    }
 }
 
 impl NetworkDiscovery {
@@ -59,11 +72,11 @@ impl NetworkDiscovery {
 
         // Create mDNS daemon
         let daemon = ServiceDaemon::new()
-            .map_err(|e| AppError::MdnsError(format!("Failed to create mDNS daemon: {}", e)))?;
+            .map_err(|e| AppError::MdnsError(format!("Failed to create mDNS daemon: {e}")))?;
 
         // Register our service
         let user_json =
-            serde_json::to_string(&self.local_user).map_err(|e| AppError::SerializationError(e))?;
+            serde_json::to_string(&self.local_user).map_err(AppError::SerializationError)?;
 
         let service_info = ServiceInfo::new(
             SERVICE_TYPE,
@@ -77,16 +90,16 @@ impl NetworkDiscovery {
                 txt_records
             }),
         )
-        .map_err(|e| AppError::MdnsError(format!("Failed to create service info: {}", e)))?;
+        .map_err(|e| AppError::MdnsError(format!("Failed to create service info: {e}")))?;
 
         daemon
             .register(service_info)
-            .map_err(|e| AppError::MdnsError(format!("Failed to register service: {}", e)))?;
+            .map_err(|e| AppError::MdnsError(format!("Failed to register service: {e}")))?;
 
         // Browse for other services
         let browse_handle = daemon
             .browse(SERVICE_TYPE)
-            .map_err(|e| AppError::MdnsError(format!("Failed to browse for services: {}", e)))?;
+            .map_err(|e| AppError::MdnsError(format!("Failed to browse for services: {e}")))?;
 
         // Set up channel for service events
         let (event_tx, mut event_rx) = mpsc::channel::<ServiceEvent>(32);
@@ -96,27 +109,36 @@ impl NetworkDiscovery {
 
         // Create a thread to handle the receiver
         let browse_handle_clone = browse_handle.clone();
+        let is_running_clone = Arc::clone(&self.is_running);
         std::thread::spawn(move || {
             loop {
+                // Check if we should stop
+                {
+                    let is_running = is_running_clone.lock().unwrap();
+                    if !*is_running {
+                        break;
+                    }
+                }
+
                 // Get a new receiver for each iteration
-                let receiver = browse_handle_clone.recv();
+                let receiver = browse_handle_clone.recv_timeout(Duration::from_millis(500));
 
                 // Process the event
                 match receiver {
                     Ok(event) => {
                         // Try to send the event to the channel
-                        if let Err(_) = event_tx.blocking_send(event) {
+                        if event_tx.blocking_send(event).is_err() {
+                            debug!("Event channel closed, stopping receiver thread");
                             break;
                         }
                     }
                     Err(_) => {
-                        break;
+                        // Timeout or error, continue loop to check is_running
+                        continue;
                     }
                 }
-
-                // Sleep a bit to avoid busy waiting
-                std::thread::sleep(Duration::from_millis(100));
             }
+            debug!("mDNS receiver thread exiting");
         });
 
         // Set running flag
@@ -150,40 +172,71 @@ impl NetworkDiscovery {
                     Some(event) = event_rx.recv() => {
                         match event {
                             ServiceEvent::ServiceResolved(info) => {
+                                debug!("Service resolved: {}", info.get_fullname());
                                 // Extract user info from TXT records
                                 let txt_properties = info.get_properties();
                                 for record in txt_properties.iter() {
-                                    let value = record.val_str();
-                                    if let Ok(user) = serde_json::from_str::<User>(&value) {
-                                        // Don't add ourselves to the peer list
-                                        if user.id != local_id {
-                                            debug!("Discovered peer: {:?}", user);
-                                            let mut peers_map = peers.lock().unwrap();
-                                            peers_map.insert(user.id.clone(), user);
+                                    if record.key() == "user" {
+                                        let value = record.val_str();
+                                        match serde_json::from_str::<User>(value) {
+                                            Ok(mut user) => {
+                                                // Don't add ourselves to the peer list
+                                                if user.id != local_id {
+                                                    // Update user IP from service info
+                                                    user.ip = info.get_addresses().iter().next().map(|addr| addr.to_string()).unwrap_or(user.ip);
+                                                    user.last_seen = chrono::Utc::now();
+                                                    info!("Discovered peer: {} at {}", user.name, user.ip);
+                                                    let mut peers_map = peers.lock().unwrap();
+                                                    peers_map.insert(user.id.clone(), user);
+                                                }
+                                            }
+                                            Err(e) => {
+                                                warn!("Failed to parse user data from TXT record: {e}");
+                                            }
                                         }
+                                        break; // Found the user record
                                     }
                                 }
                             }
                             ServiceEvent::ServiceRemoved(service_type, name) => {
-                                debug!("Service removed: {} {}", service_type, name);
+                                info!("Service removed: {service_type} {name}");
                                 // Remove peer if it exists
                                 let mut peers_map = peers.lock().unwrap();
+                                let before_count = peers_map.len();
                                 peers_map.retain(|_, user| {
                                     !name.contains(&user.id)
                                 });
+                                let after_count = peers_map.len();
+                                if before_count != after_count {
+                                    info!("Removed {} peer(s) from discovery", before_count - after_count);
+                                }
                             }
-                            _ => {} // Ignore other events
+                            ServiceEvent::SearchStarted(service_type) => {
+                                debug!("Search started for: {service_type}");
+                            }
+                            ServiceEvent::SearchStopped(service_type) => {
+                                debug!("Search stopped for: {service_type}");
+                            }
+                            _ => {
+                                debug!("Other mDNS event: {event:?}");
+                            }
                         }
                     }
 
-                    // Periodic cleanup of stale peers
+                    // Periodic cleanup of stale peers and re-discovery
                     _ = cleanup_interval.tick() => {
                         let now = chrono::Utc::now();
                         let mut peers_map = peers.lock().unwrap();
+                        let before_count = peers_map.len();
                         peers_map.retain(|_, user| {
                             // Remove peers that haven't been seen in 2 minutes
                             now.signed_duration_since(user.last_seen).num_seconds() < 120
                         });
+                        let after_count = peers_map.len();
+                        if before_count != after_count {
+                            info!("Cleaned up {} stale peer(s)", before_count - after_count);
+                        }
+                        info!("Current peer count: {after_count}");
                     }
                 }
             }
@@ -203,31 +256,28 @@ impl NetworkDiscovery {
         {
             let is_running = self.is_running.lock().unwrap();
             if !*is_running {
-                return Err(AppError::DiscoveryError(
-                    "Discovery not running".to_string(),
-                ));
+                return Ok(()); // Already stopped, no error
             }
         }
 
         // Send stop signal
-        if let Some(tx) = &self.stop_tx {
-            if let Err(e) = tx.send(()).await {
-                error!("Failed to send stop signal: {}", e);
-            }
+        if let Some(tx) = self.stop_tx.take() {
+            let _ = tx.send(()).await; // Ignore send errors
+        }
+
+        // Set running flag to false first
+        {
+            let mut is_running = self.is_running.lock().unwrap();
+            *is_running = false;
         }
 
         // Unregister service and shutdown daemon
-        if let Some(daemon) = &self.daemon {
-            if let Err(e) = daemon.unregister(&self.service_name) {
-                warn!("Failed to unregister service: {}", e);
-            }
-
-            // No need to shutdown the daemon as it will be dropped
+        if let Some(daemon) = self.daemon.take() {
+            // Only unregister if the service was actually registered
+            let _ = daemon.unregister(&self.service_name); // Ignore unregister errors
+                                                           // Give the daemon time to clean up
+            tokio::time::sleep(Duration::from_millis(100)).await;
         }
-
-        // Clear state
-        self.daemon = None;
-        self.stop_tx = None;
 
         // Clear peers
         {
@@ -259,8 +309,14 @@ impl NetworkDiscovery {
 
         // Update service TXT record with new user info
         if let Some(daemon) = &self.daemon {
-            let user_json = serde_json::to_string(&self.local_user)
-                .map_err(|e| AppError::SerializationError(e))?;
+            let user_json =
+                serde_json::to_string(&self.local_user).map_err(AppError::SerializationError)?;
+
+            // First unregister the old service
+            let _ = daemon.unregister(&self.service_name);
+
+            // Give some time for unregistration
+            tokio::time::sleep(Duration::from_millis(100)).await;
 
             let service_info = ServiceInfo::new(
                 SERVICE_TYPE,
@@ -274,11 +330,11 @@ impl NetworkDiscovery {
                     txt_records
                 }),
             )
-            .map_err(|e| AppError::MdnsError(format!("Failed to create service info: {}", e)))?;
+            .map_err(|e| AppError::MdnsError(format!("Failed to create service info: {e}")))?;
 
             daemon
                 .register(service_info)
-                .map_err(|e| AppError::MdnsError(format!("Failed to update service: {}", e)))?;
+                .map_err(|e| AppError::MdnsError(format!("Failed to update service: {e}")))?;
 
             info!("Broadcast user update");
             Ok(())

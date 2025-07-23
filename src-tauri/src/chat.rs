@@ -1,5 +1,4 @@
 use log::{debug, error, info};
-use serde_json;
 use std::collections::HashMap;
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -46,13 +45,13 @@ impl ChatManager {
     #[allow(dead_code)]
     pub fn start_chat_service(&mut self) -> AppResult<()> {
         // Bind to the chat port
-        let listener = TcpListener::bind(format!("0.0.0.0:{}", CHAT_PORT)).map_err(|e| {
-            AppError::NetworkError(format!("Failed to bind to port {}: {}", CHAT_PORT, e))
+        let listener = TcpListener::bind(format!("0.0.0.0:{CHAT_PORT}")).map_err(|e| {
+            AppError::NetworkError(format!("Failed to bind to port {CHAT_PORT}: {e}"))
         })?;
 
-        listener.set_nonblocking(true).map_err(|e| {
-            AppError::NetworkError(format!("Failed to set non-blocking mode: {}", e))
-        })?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|e| AppError::NetworkError(format!("Failed to set non-blocking mode: {e}")))?;
 
         // Set up channel for stopping the service
         let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
@@ -67,7 +66,7 @@ impl ChatManager {
             .as_ref()
             .unwrap()
             .try_clone()
-            .map_err(|e| AppError::NetworkError(format!("Failed to clone listener: {}", e)))?;
+            .map_err(|e| AppError::NetworkError(format!("Failed to clone listener: {e}")))?;
         let messages = Arc::clone(&self.messages);
         let connections = Arc::clone(&self.connections);
         let local_user = self.local_user.clone();
@@ -86,7 +85,7 @@ impl ChatManager {
                 // Accept incoming connections
                 match listener.accept() {
                     Ok((stream, addr)) => {
-                        debug!("New connection from: {}", addr);
+                        debug!("New connection from: {addr}");
 
                         // Clone necessary values for the connection handler
                         let messages_clone = Arc::clone(&messages);
@@ -104,7 +103,7 @@ impl ChatManager {
                             )
                             .await
                             {
-                                error!("Error handling connection: {}", e);
+                                error!("Error handling connection: {e}");
                             }
                         });
                     }
@@ -113,7 +112,7 @@ impl ChatManager {
                         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     }
                     Err(e) => {
-                        error!("Error accepting connection: {}", e);
+                        error!("Error accepting connection: {e}");
                         break;
                     }
                 }
@@ -134,7 +133,7 @@ impl ChatManager {
         // Send stop signal
         if let Some(tx) = &self.stop_tx {
             if let Err(e) = tx.blocking_send(()) {
-                error!("Failed to send stop signal: {}", e);
+                error!("Failed to send stop signal: {e}");
             }
         }
 
@@ -167,7 +166,7 @@ impl ChatManager {
         // Store message
         {
             let mut messages = self.messages.lock().unwrap();
-            let peer_messages = messages.entry(peer_id.to_string()).or_insert_with(Vec::new);
+            let peer_messages = messages.entry(peer_id.to_string()).or_default();
             peer_messages.push(message.clone());
         }
 
@@ -190,16 +189,16 @@ impl ChatManager {
         if let Some(Some(addr)) = peer_addr {
             // We have a connection, send the message
             let message_json =
-                serde_json::to_string(message).map_err(|e| AppError::SerializationError(e))?;
+                serde_json::to_string(message).map_err(AppError::SerializationError)?;
 
             let mut stream = AsyncTcpStream::connect(addr)
                 .await
-                .map_err(|e| AppError::NetworkError(format!("Failed to connect to peer: {}", e)))?;
+                .map_err(|e| AppError::NetworkError(format!("Failed to connect to peer: {e}")))?;
 
             stream
                 .write_all(message_json.as_bytes())
                 .await
-                .map_err(|e| AppError::NetworkError(format!("Failed to send message: {}", e)))?;
+                .map_err(|e| AppError::NetworkError(format!("Failed to send message: {e}")))?;
 
             Ok(())
         } else {
@@ -232,8 +231,7 @@ impl ChatManager {
             Ok(())
         } else {
             Err(AppError::ChatError(format!(
-                "No messages found for peer {}",
-                peer_id
+                "No messages found for peer {peer_id}"
             )))
         }
     }
@@ -250,27 +248,24 @@ async fn handle_connection(
 ) -> AppResult<()> {
     // Convert to async stream
     let mut stream = AsyncTcpStream::from_std(stream)
-        .map_err(|e| AppError::NetworkError(format!("Failed to convert stream: {}", e)))?;
+        .map_err(|e| AppError::NetworkError(format!("Failed to convert stream: {e}")))?;
 
     // Read message
     let mut buffer = Vec::new();
     stream
         .read_to_end(&mut buffer)
         .await
-        .map_err(|e| AppError::NetworkError(format!("Failed to read message: {}", e)))?;
+        .map_err(|e| AppError::NetworkError(format!("Failed to read message: {e}")))?;
 
     // Parse message
-    let message: Message =
-        serde_json::from_slice(&buffer).map_err(|e| AppError::SerializationError(e))?;
+    let message: Message = serde_json::from_slice(&buffer).map_err(AppError::SerializationError)?;
 
-    debug!("Received message: {:?}", message);
+    debug!("Received message: {message:?}");
 
     // Store message
     {
         let mut messages = messages.lock().unwrap();
-        let peer_messages = messages
-            .entry(message.sender_id.clone())
-            .or_insert_with(Vec::new);
+        let peer_messages = messages.entry(message.sender_id.clone()).or_default();
         peer_messages.push(message.clone());
     }
 

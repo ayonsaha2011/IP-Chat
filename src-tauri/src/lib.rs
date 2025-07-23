@@ -8,6 +8,8 @@ use local_ip_address::local_ip;
 use log::{error, info};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use crate::chat::ChatManager;
 use crate::discovery::NetworkDiscovery;
@@ -22,9 +24,25 @@ async fn ensure_services_initialized(state: &mut AppState) {
         // Start network services
         info!("Starting network discovery service...");
         if let Err(e) = state.discovery.start_discovery().await {
-            error!("Failed to start discovery service: {}", e);
+            error!("Failed to start discovery service: {e}");
         } else {
             info!("Discovery service started successfully");
+        }
+
+        // Start chat service
+        info!("Starting chat service...");
+        if let Err(e) = state.chat_manager.start_chat_service() {
+            error!("Failed to start chat service: {e}");
+        } else {
+            info!("Chat service started successfully");
+        }
+
+        // Start file transfer service
+        info!("Starting file transfer service...");
+        if let Err(e) = state.file_manager.start_file_transfer_service() {
+            error!("Failed to start file transfer service: {e}");
+        } else {
+            info!("File transfer service started successfully");
         }
 
         state.services_initialized = true;
@@ -62,15 +80,30 @@ async fn get_discovered_peers(
 }
 
 #[tauri::command]
-async fn get_local_user(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result<User, String> {
-    info!("get_local_user command called");
+async fn refresh_discovery(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<User>, String> {
     let mut state = state.lock().await;
-    info!("State locked, ensuring services initialized");
-    ensure_services_initialized(&mut state).await;
-    info!(
-        "Services initialized, returning local user: {:?}",
-        state.local_user
-    );
+    // Restart discovery to refresh peer list
+    if let Err(e) = state.discovery.stop_discovery().await {
+        error!("Failed to stop discovery during refresh: {e}");
+    }
+
+    // Small delay to ensure clean shutdown
+    tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+    if let Err(e) = state.discovery.start_discovery().await {
+        error!("Failed to restart discovery: {e}");
+        return Err(e.to_string());
+    }
+
+    info!("Discovery refreshed successfully");
+    Ok(state.discovery.get_discovered_peers())
+}
+
+#[tauri::command]
+async fn get_local_user(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result<User, String> {
+    let state = state.lock().await;
     Ok(state.local_user.clone())
 }
 
@@ -203,9 +236,42 @@ async fn update_username(
     state.local_user.name = username;
     // Broadcast the updated user info
     if let Err(e) = state.discovery.broadcast_user_update().await {
-        error!("Failed to broadcast user update: {}", e);
+        error!("Failed to broadcast user update: {e}");
     }
     Ok(state.local_user.clone())
+}
+
+/// Generate a network-based user ID using the default gateway IP and hostname
+fn generate_network_based_id() -> String {
+    match default_net::get_default_gateway() {
+        Ok(gateway) => {
+            // Use the gateway IP and hostname to create a consistent ID for the network
+            let gateway_ip = gateway.ip_addr.to_string();
+            let hostname = hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            
+            // Combine gateway IP and hostname for uniqueness within the network
+            let combined_key = format!("{}-{}", gateway_ip, hostname);
+            let mut hasher = DefaultHasher::new();
+            combined_key.hash(&mut hasher);
+            let hash = hasher.finish();
+            
+            // Create a shorter, readable ID from the hash
+            format!("net-{:x}", hash & 0xFFFFFFFFFFFF)
+        }
+        Err(e) => {
+            error!("Failed to get default gateway, falling back to hostname-based ID: {e}");
+            // Fallback to hostname-based ID if we can't get gateway
+            let hostname = hostname::get()
+                .map(|h| h.to_string_lossy().to_string())
+                .unwrap_or_else(|_| "unknown".to_string());
+            let mut hasher = DefaultHasher::new();
+            hostname.hash(&mut hasher);
+            let hash = hasher.finish();
+            format!("host-{:x}", hash & 0xFFFFFFFFFFFF)
+        }
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -214,16 +280,16 @@ pub fn run() {
     let local_ip = match local_ip() {
         Ok(ip) => ip,
         Err(e) => {
-            error!("Failed to get local IP address: {}", e);
+            error!("Failed to get local IP address: {e}");
             std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
         }
     };
 
-    info!("Local IP address: {}", local_ip);
+    info!("Local IP address: {local_ip}");
 
     // Create local user
     let local_user = User {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: generate_network_based_id(),
         name: hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "Unknown User".to_string()),
@@ -231,7 +297,7 @@ pub fn run() {
         last_seen: chrono::Utc::now(),
     };
 
-    info!("Local user: {:?}", local_user);
+    info!("Local user: {local_user:?}");
 
     // Initialize app state
     let network_discovery = NetworkDiscovery::new(local_user.clone());
@@ -247,9 +313,15 @@ pub fn run() {
     }));
 
     // Build and run the application
+    let app_state_clone = Arc::clone(&app_state);
+
     tauri::Builder::default()
-        .setup(|_app| {
-            // Services will be started lazily when first accessed
+        .setup(move |_app| {
+            // Start services automatically on app startup
+            tauri::async_runtime::spawn(async move {
+                let mut state = app_state_clone.lock().await;
+                ensure_services_initialized(&mut state).await;
+            });
             Ok(())
         })
         .plugin(tauri_plugin_opener::init())
@@ -262,6 +334,7 @@ pub fn run() {
             start_discovery,
             stop_discovery,
             get_discovered_peers,
+            refresh_discovery,
             get_local_user,
             send_message,
             get_messages,
