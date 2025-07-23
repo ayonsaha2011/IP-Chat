@@ -1,0 +1,407 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-release:
+    name: Create Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create_release.outputs.id }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ steps.get_version.outputs.version }}
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Get version
+      id: get_version
+      run: |
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.version }}"
+        else
+          VERSION=${GITHUB_REF#refs/tags/}
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "Version: $VERSION"
+        
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_version.outputs.version }}
+        release_name: IP Chat ${{ steps.get_version.outputs.version }}
+        body: |
+          ## IP Chat ${{ steps.get_version.outputs.version }}
+          
+          A cross-platform desktop application for local network communication and file sharing.
+          
+          ### Features
+          - 🔍 **Network Discovery**: Automatic peer discovery on local network
+          - 💬 **Real-time Chat**: Instant messaging with read receipts
+          - 📁 **File Sharing**: Drag-and-drop file transfer with progress tracking  
+          - ⚙️ **Settings**: Customizable themes and preferences
+          - 🖥️ **Cross-Platform**: Works on Windows, macOS, and Linux
+          
+          ### Downloads
+          - **Windows**: Download the `.msi` installer
+          - **macOS**: Download the `.dmg` file
+          - **Linux**: Download the `.AppImage` or `.deb` package
+          
+          ### Installation
+          1. Download the appropriate file for your operating system
+          2. Run the installer or AppImage
+          3. Launch IP Chat from your applications menu
+          4. Start discovering peers on your local network!
+          
+          ### What's New
+          - Initial release of IP Chat
+          - Full local network peer discovery
+          - Real-time messaging capabilities
+          - File transfer functionality
+          - Multi-platform desktop support
+          
+        draft: false
+        prerelease: false
+
+  build-release:
+    name: Build Release
+    needs: create-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux builds
+          - platform: ubuntu-20.04
+            rust-target: x86_64-unknown-linux-gnu
+            build-name: "Linux (Ubuntu/Debian)"
+            
+          - platform: ubuntu-22.04
+            rust-target: x86_64-unknown-linux-gnu
+            build-name: "Linux (Ubuntu 22.04+)"
+            
+          # Windows builds
+          - platform: windows-latest
+            rust-target: x86_64-pc-windows-msvc
+            build-name: "Windows (x64)"
+            
+          # macOS builds
+          - platform: macos-latest
+            rust-target: x86_64-apple-darwin
+            build-name: "macOS (Intel)"
+            
+          - platform: macos-latest
+            rust-target: aarch64-apple-darwin
+            build-name: "macOS (Apple Silicon)"
+            
+    runs-on: ${{ matrix.platform }}
+    continue-on-error: true
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Setup Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        targets: ${{ matrix.rust-target }}
+        
+    - name: Cache Rust dependencies
+      uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri
+        
+    - name: Install system dependencies (Ubuntu 20.04)
+      if: matrix.platform == 'ubuntu-20.04'
+      continue-on-error: true
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev
+        
+    - name: Install system dependencies (Ubuntu 22.04)
+      if: matrix.platform == 'ubuntu-22.04'
+      continue-on-error: true
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev
+        
+    - name: Install frontend dependencies
+      continue-on-error: false
+      run: npm ci
+      
+    - name: Build Tauri app
+      id: build
+      continue-on-error: true
+      run: |
+        echo "Building for ${{ matrix.build-name }}..."
+        npm run tauri build -- --target ${{ matrix.rust-target }}
+        echo "build_success=true" >> $GITHUB_OUTPUT
+      
+    - name: Check build result
+      if: steps.build.outcome == 'failure'
+      run: |
+        echo "::warning::Build failed for ${{ matrix.build-name }} - skipping this platform"
+        echo "build_success=false" >> $GITHUB_OUTPUT
+      
+    - name: Prepare release assets (Linux - Ubuntu 20.04)
+      if: matrix.platform == 'ubuntu-20.04' && steps.build.outcome == 'success'
+      continue-on-error: true
+      id: prepare_linux_20
+      run: |
+        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        
+        # AppImage (Universal Linux)
+        if [ -d "appimage" ]; then
+          mv appimage/*.AppImage ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.AppImage
+          echo "appimage_created=true" >> $GITHUB_OUTPUT
+        fi
+        
+        # Debian package (Ubuntu/Debian)
+        if [ -d "deb" ]; then
+          mv deb/*.deb ip-chat_${{ needs.create-release.outputs.version }}_ubuntu20.04_amd64.deb
+          echo "deb_created=true" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Prepare release assets (Linux - Ubuntu 22.04)
+      if: matrix.platform == 'ubuntu-22.04' && steps.build.outcome == 'success'
+      continue-on-error: true
+      id: prepare_linux_22
+      run: |
+        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        
+        # Debian package (Ubuntu 22.04+)
+        if [ -d "deb" ]; then
+          mv deb/*.deb ip-chat_${{ needs.create-release.outputs.version }}_ubuntu22.04_amd64.deb
+          echo "deb_created=true" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Create RPM package (CentOS/RHEL/Fedora)
+      if: matrix.platform == 'ubuntu-20.04' && steps.build.outcome == 'success'
+      continue-on-error: true
+      id: create_rpm
+      run: |
+        # Install alien to convert DEB to RPM
+        sudo apt-get install -y alien
+        
+        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        
+        if [ -f "ip-chat_${{ needs.create-release.outputs.version }}_ubuntu20.04_amd64.deb" ]; then
+          sudo alien --to-rpm --scripts ip-chat_${{ needs.create-release.outputs.version }}_ubuntu20.04_amd64.deb
+          if [ -f *.rpm ]; then
+            mv *.rpm ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.rpm
+            echo "rpm_created=true" >> $GITHUB_OUTPUT
+          fi
+        fi
+        
+    - name: Create Arch Linux package
+      if: matrix.platform == 'ubuntu-20.04' && steps.build.outcome == 'success'
+      continue-on-error: true
+      id: create_arch
+      run: |
+        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        
+        # Create a simple tar.xz package for Arch Linux
+        if [ -f "../ip-chat" ]; then
+          mkdir -p arch-package/usr/bin
+          mkdir -p arch-package/usr/share/applications
+          mkdir -p arch-package/usr/share/icons/hicolor/128x128/apps
+          
+          cp ../ip-chat arch-package/usr/bin/
+          
+          # Create desktop file
+          cat > arch-package/usr/share/applications/ip-chat.desktop << EOF
+        [Desktop Entry]
+        Name=IP Chat
+        Comment=Local network chat and file sharing
+        Exec=ip-chat
+        Icon=ip-chat
+        Type=Application
+        Categories=Network;Chat;
+        EOF
+          
+          # Package it
+          cd arch-package
+          tar -cJf ../ip-chat_${{ needs.create-release.outputs.version }}_arch_x86_64.tar.xz *
+          cd ..
+          echo "arch_created=true" >> $GITHUB_OUTPUT
+        fi
+        
+    - name: Prepare release assets (Windows)
+      if: matrix.platform == 'windows-latest' && steps.build.outcome == 'success'
+      continue-on-error: true
+      id: prepare_windows
+      run: |
+        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        
+        # MSI installer
+        if (Test-Path "msi") {
+          Get-ChildItem msi/*.msi | Rename-Item -NewName "ip-chat_${{ needs.create-release.outputs.version }}_windows_x64.msi"
+          echo "msi_created=true" >> $env:GITHUB_OUTPUT
+        }
+        
+        # Portable executable
+        if (Test-Path "../ip-chat.exe") {
+          Copy-Item "../ip-chat.exe" "ip-chat_${{ needs.create-release.outputs.version }}_windows_x64_portable.exe"
+          echo "portable_created=true" >> $env:GITHUB_OUTPUT
+        }
+        
+    - name: Prepare release assets (macOS)
+      if: matrix.platform == 'macos-latest' && steps.build.outcome == 'success'
+      continue-on-error: true
+      id: prepare_macos
+      run: |
+        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        
+        # DMG file
+        if [ -d "dmg" ]; then
+          if [ "${{ matrix.rust-target }}" = "aarch64-apple-darwin" ]; then
+            mv dmg/*.dmg ip-chat_${{ needs.create-release.outputs.version }}_macos_aarch64.dmg
+            echo "dmg_created=true" >> $GITHUB_OUTPUT
+            echo "arch=aarch64" >> $GITHUB_OUTPUT
+          else
+            mv dmg/*.dmg ip-chat_${{ needs.create-release.outputs.version }}_macos_x64.dmg
+            echo "dmg_created=true" >> $GITHUB_OUTPUT
+            echo "arch=x64" >> $GITHUB_OUTPUT
+          fi
+        fi
+        
+    # Linux uploads
+    - name: Upload Linux AppImage
+      if: steps.prepare_linux_20.outputs.appimage_created == 'true'
+      continue-on-error: true
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.AppImage
+        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.AppImage
+        asset_content_type: application/octet-stream
+        
+    - name: Upload Ubuntu 20.04 DEB
+      if: steps.prepare_linux_20.outputs.deb_created == 'true'
+      continue-on-error: true
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_ubuntu20.04_amd64.deb
+        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_ubuntu20.04_amd64.deb
+        asset_content_type: application/vnd.debian.binary-package
+        
+    - name: Upload Ubuntu 22.04 DEB
+      if: steps.prepare_linux_22.outputs.deb_created == 'true'
+      continue-on-error: true
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_ubuntu22.04_amd64.deb
+        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_ubuntu22.04_amd64.deb
+        asset_content_type: application/vnd.debian.binary-package
+        
+    - name: Upload RPM Package
+      if: steps.create_rpm.outputs.rpm_created == 'true'
+      continue-on-error: true
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.rpm
+        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.rpm
+        asset_content_type: application/x-rpm
+        
+    - name: Upload Arch Linux Package
+      if: steps.create_arch.outputs.arch_created == 'true'
+      continue-on-error: true
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_arch_x86_64.tar.xz
+        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_arch_x86_64.tar.xz
+        asset_content_type: application/x-xz
+        
+    # Windows uploads
+    - name: Upload Windows MSI
+      if: steps.prepare_windows.outputs.msi_created == 'true'
+      continue-on-error: true
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_windows_x64.msi
+        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_windows_x64.msi
+        asset_content_type: application/octet-stream
+        
+    - name: Upload Windows Portable
+      if: steps.prepare_windows.outputs.portable_created == 'true'
+      continue-on-error: true
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_windows_x64_portable.exe
+        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_windows_x64_portable.exe
+        asset_content_type: application/octet-stream
+        
+    # macOS uploads
+    - name: Upload macOS DMG
+      if: steps.prepare_macos.outputs.dmg_created == 'true'
+      continue-on-error: true
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-release.outputs.upload_url }}
+        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_macos_${{ steps.prepare_macos.outputs.arch }}.dmg
+        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_macos_${{ steps.prepare_macos.outputs.arch }}.dmg
+        asset_content_type: application/octet-stream
+
+  # Summary job to report which builds succeeded/failed
+  build-summary:
+    name: Build Summary
+    needs: [create-release, build-release]
+    runs-on: ubuntu-latest
+    if: always()
+    
+    steps:
+    - name: Report build results
+      run: |
+        echo "## Build Results for ${{ needs.create-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Platform | Status |" >> $GITHUB_STEP_SUMMARY
+        echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+        
+        # Check each job result (this is a simplified example)
+        echo "Release build completed. Check individual job logs for detailed results."
+        echo ""
+        echo "Available packages will be uploaded to the GitHub release page."
+        echo "If some platforms failed, users can still download packages for successful builds."

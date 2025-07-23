@@ -1,0 +1,150 @@
+name: Release Fallback
+
+# This workflow provides a fallback for creating releases if the main release workflow fails
+# It creates basic builds for the most common platforms without advanced error handling
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release version (e.g., v1.0.0)'
+        required: true
+        type: string
+      create_release:
+        description: 'Create GitHub release'
+        required: true
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  create-fallback-release:
+    name: Create Fallback Release
+    runs-on: ubuntu-latest
+    if: github.event.inputs.create_release == 'true'
+    outputs:
+      release_id: ${{ steps.create_release.outputs.id }}
+      upload_url: ${{ steps.create_release.outputs.upload_url }}
+      version: ${{ github.event.inputs.version }}
+    
+    steps:
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        tag_name: ${{ github.event.inputs.version }}
+        release_name: IP Chat ${{ github.event.inputs.version }} (Fallback Build)
+        body: |
+          ## IP Chat ${{ github.event.inputs.version }} - Fallback Release
+          
+          This is a fallback release created when the main release workflow encountered issues.
+          Basic builds are provided for the most common platforms.
+          
+          ### Available Downloads
+          - Windows: MSI installer
+          - macOS: DMG file (Intel only in fallback mode)
+          - Linux: AppImage (universal)
+          
+          For full platform support, please wait for the main release workflow to be fixed.
+          
+        draft: false
+        prerelease: true
+
+  build-windows:
+    name: Build Windows
+    needs: create-fallback-release
+    runs-on: windows-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri
+        
+    - run: npm ci
+    - run: npm run tauri build
+    
+    - name: Upload Windows MSI
+      if: needs.create-fallback-release.outputs.upload_url != ''
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-fallback-release.outputs.upload_url }}
+        asset_path: src-tauri/target/release/bundle/msi/IP Chat_*_x64_en-US.msi
+        asset_name: ip-chat_${{ needs.create-fallback-release.outputs.version }}_windows_fallback.msi
+        asset_content_type: application/octet-stream
+
+  build-macos:
+    name: Build macOS
+    needs: create-fallback-release
+    runs-on: macos-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri
+        
+    - run: npm ci
+    - run: npm run tauri build
+    
+    - name: Upload macOS DMG
+      if: needs.create-fallback-release.outputs.upload_url != ''
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-fallback-release.outputs.upload_url }}
+        asset_path: src-tauri/target/release/bundle/dmg/IP Chat_*.dmg
+        asset_name: ip-chat_${{ needs.create-fallback-release.outputs.version }}_macos_fallback.dmg
+        asset_content_type: application/octet-stream
+
+  build-linux:
+    name: Build Linux
+    needs: create-fallback-release
+    runs-on: ubuntu-20.04
+    
+    steps:
+    - uses: actions/checkout@v4
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+    - uses: dtolnay/rust-toolchain@stable
+    - uses: Swatinem/rust-cache@v2
+      with:
+        workspaces: src-tauri
+        
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev
+        
+    - run: npm ci
+    - run: npm run tauri build
+    
+    - name: Upload Linux AppImage
+      if: needs.create-fallback-release.outputs.upload_url != ''
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+      with:
+        upload_url: ${{ needs.create-fallback-release.outputs.upload_url }}
+        asset_path: src-tauri/target/release/bundle/appimage/ip-chat_*_amd64.AppImage
+        asset_name: ip-chat_${{ needs.create-fallback-release.outputs.version }}_linux_fallback.AppImage
+        asset_content_type: application/octet-stream

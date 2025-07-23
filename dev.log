@@ -1,0 +1,8 @@
+$ vite
+
+  VITE v6.3.5  ready in 293 ms
+
+  ➜  Local:   http://localhost:1420/
+8:40:38 AM [vite] (client) ✨ new dependencies optimized: @tauri-apps/plugin-dialog
+8:40:38 AM [vite] (client) ✨ optimized dependencies changed. reloading
+error: script "dev" exited with code 143
