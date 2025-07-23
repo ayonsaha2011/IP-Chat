@@ -56,11 +56,20 @@ const ChatPanel: Component = () => {
     const content = message().trim();
     if (!content || !peer()) return;
     
+    console.log("Attempting to send message to peer:", peer()!.id, "Content:", content);
+    
     try {
       await chatStore.sendMessage(peer()!.id, content);
       setMessage("");
+      console.log("Message sent successfully");
     } catch (err) {
       console.error("Failed to send message:", err);
+      // Show user-friendly error message
+      if (err instanceof Error) {
+        if (err.message.includes("Peer not found")) {
+          console.warn("Peer not discovered yet. Try refreshing peers or ensure the peer is online.");
+        }
+      }
     }
   };
   

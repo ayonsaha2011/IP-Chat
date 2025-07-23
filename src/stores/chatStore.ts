@@ -93,7 +93,10 @@ function updateConversations(allMessages: Message[]) {
 // Send a message to a peer
 async function sendMessage(peerId: string, content: string) {
   try {
+    console.log('Chat store: Sending message to peer:', peerId, 'Content:', content);
     const message = await invoke<Message>('send_message', { peerId, content });
+    
+    console.log('Chat store: Message sent successfully:', message);
     
     // Update messages
     setMessages(prev => [...prev, message]);
@@ -103,9 +106,10 @@ async function sendMessage(peerId: string, content: string) {
     
     return message;
   } catch (err) {
-    console.error('Failed to send message:', err);
-    setError(`Failed to send message: ${err instanceof Error ? err.message : String(err)}`);
-    toast.error(`Failed to send message: ${err instanceof Error ? err.message : String(err)}`);
+    console.error('Chat store: Failed to send message:', err);
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    setError(`Failed to send message: ${errorMessage}`);
+    toast.error(`Failed to send message: ${errorMessage}`);
     throw err;
   }
 }
