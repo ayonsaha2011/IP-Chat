@@ -115,27 +115,9 @@ impl ChatManager {
 
     /// Sends a message to a peer
     pub async fn send_message(&mut self, peer_id: &str, content: &str) -> AppResult<Message> {
-        // Create message
-        let message = Message {
-            id: Uuid::new_v4().to_string(),
-            sender_id: self.local_user.id.clone(),
-            recipient_id: peer_id.to_string(),
-            content: content.to_string(),
-            timestamp: chrono::Utc::now(),
-            read: false,
-        };
-
-        // Store message in our sent messages
-        {
-            let mut messages = self.messages.lock().unwrap();
-            let sent_messages = messages.entry(self.local_user.id.clone()).or_default();
-            sent_messages.push(message.clone());
-        }
-
-        // Send message to peer
-        self.send_message_to_peer(peer_id, &message, None).await?;
-
-        Ok(message)
+        // This method is kept for backward compatibility
+        // Use send_message_with_peer_ip instead
+        Err(AppError::NetworkError("Use send_message_with_peer_ip method instead".to_string()))
     }
 
     /// Sends a message to a peer with a specific IP
