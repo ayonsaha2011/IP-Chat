@@ -46,17 +46,9 @@ impl Drop for NetworkDiscovery {
 impl NetworkDiscovery {
     /// Creates a new NetworkDiscovery instance
     pub fn new(local_user: User) -> Self {
-        // Use a network-wide service name based on gateway IP
-        let service_name = match default_net::get_default_gateway() {
-            Ok(gateway) => {
-                let gateway_ip = gateway.ip_addr.to_string();
-                let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                std::hash::Hash::hash(&gateway_ip, &mut hasher);
-                let hash = std::hash::Hasher::finish(&hasher);
-                format!("ip-chat-net-{:x}", hash & 0xFFFFFFFF)
-            }
-            Err(_) => "ip-chat-net-local".to_string(),
-        };
+        // Each device needs a unique service name to avoid registration conflicts
+        // We use the user ID (which is hostname-based) to make it unique per device
+        let service_name = format!("ip-chat-{}", local_user.id);
 
         NetworkDiscovery {
             local_user,
