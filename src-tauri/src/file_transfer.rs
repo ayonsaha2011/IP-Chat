@@ -5,7 +5,7 @@ use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, AsyncBufReadExt};
 use tokio::net::TcpStream as AsyncTcpStream;
 use tokio::sync::mpsc;
 use uuid::Uuid;
@@ -226,7 +226,7 @@ impl FileTransferManager {
             .await
             .map_err(|e| AppError::NetworkError(format!("Failed to connect to peer: {e}")))?;
 
-        // Send the transfer request
+        // Send the transfer request as JSON
         let transfer_json =
             serde_json::to_string(transfer).map_err(AppError::SerializationError)?;
 
@@ -234,6 +234,11 @@ impl FileTransferManager {
             .write_all(transfer_json.as_bytes())
             .await
             .map_err(|e| AppError::NetworkError(format!("Failed to send transfer request: {e}")))?;
+
+        stream
+            .flush()
+            .await
+            .map_err(|e| AppError::NetworkError(format!("Failed to flush transfer request: {e}")))?;
 
         Ok(())
     }
@@ -408,11 +413,18 @@ async fn send_file_data(
         .await
         .map_err(|e| AppError::NetworkError(format!("Failed to connect to recipient: {e}")))?;
 
-    // Send transfer ID
+    // Send a special header to indicate this is a file data transfer
+    let header = format!("FILE_DATA:{}", transfer.id);
     stream
-        .write_all(transfer.id.as_bytes())
+        .write_all(header.as_bytes())
         .await
-        .map_err(|e| AppError::NetworkError(format!("Failed to send transfer ID: {e}")))?;
+        .map_err(|e| AppError::NetworkError(format!("Failed to send file data header: {e}")))?;
+
+    // Send a newline to separate header from data
+    stream
+        .write_all(b"\n")
+        .await
+        .map_err(|e| AppError::NetworkError(format!("Failed to send header separator: {e}")))?;
 
     // Read and send file data in chunks
     let mut buffer = vec![0; CHUNK_SIZE];
@@ -478,11 +490,18 @@ async fn receive_file_data(
         .await
         .map_err(|e| AppError::NetworkError(format!("Failed to connect to sender: {e}")))?;
 
-    // Send transfer ID
+    // Send a request for file data
+    let request = format!("REQUEST_FILE:{}", transfer.id);
     stream
-        .write_all(transfer.id.as_bytes())
+        .write_all(request.as_bytes())
         .await
-        .map_err(|e| AppError::NetworkError(format!("Failed to send transfer ID: {e}")))?;
+        .map_err(|e| AppError::NetworkError(format!("Failed to send file request: {e}")))?;
+
+    // Send a newline to separate request from data
+    stream
+        .write_all(b"\n")
+        .await
+        .map_err(|e| AppError::NetworkError(format!("Failed to send request separator: {e}")))?;
 
     // Receive and write file data in chunks
     let mut buffer = vec![0; CHUNK_SIZE];
@@ -534,36 +553,151 @@ async fn handle_file_connection(
     local_user: User,
 ) -> AppResult<()> {
     // Convert to async stream
-    let mut stream = AsyncTcpStream::from_std(stream)
+    let stream = AsyncTcpStream::from_std(stream)
         .map_err(|e| AppError::NetworkError(format!("Failed to convert stream: {e}")))?;
 
-    // Read transfer ID
-    let mut id_buffer = [0; 36]; // UUID is 36 characters
-    stream
-        .read_exact(&mut id_buffer)
+    // Read the first line to determine the type of request
+    let mut line = String::new();
+    let mut reader = tokio::io::BufReader::new(stream);
+    reader
+        .read_line(&mut line)
         .await
-        .map_err(|e| AppError::NetworkError(format!("Failed to read transfer ID: {e}")))?;
+        .map_err(|e| AppError::NetworkError(format!("Failed to read request line: {e}")))?;
 
-    let transfer_id = String::from_utf8_lossy(&id_buffer).to_string();
+    let line = line.trim();
 
-    // Get the transfer
-    let transfer = {
-        let transfers = transfers.lock().unwrap();
-        transfers
-            .get(&transfer_id)
-            .cloned()
-            .ok_or_else(|| AppError::TransferNotFound(transfer_id.clone()))?
-    };
+    if line.starts_with("FILE_DATA:") {
+        // This is a file data transfer
+        let transfer_id = line.strip_prefix("FILE_DATA:").unwrap();
+        
+        // Get the transfer
+        let transfer = {
+            let transfers = transfers.lock().unwrap();
+            transfers
+                .get(transfer_id)
+                .cloned()
+                .ok_or_else(|| AppError::TransferNotFound(transfer_id.to_string()))?
+        };
 
-    // Handle the transfer based on our role
-    if transfer.recipient_id == local_user.id {
-        // We are the recipient, receive the file
-        receive_file_data(&transfer, transfers).await?;
-    } else if transfer.sender_id == local_user.id {
-        // We are the sender, send the file
-        send_file_data(&transfer, transfers).await?;
+        // We are the recipient, receive the file data
+        if transfer.recipient_id == local_user.id {
+            // Read the rest of the data and write to file
+            let dest_path = transfer
+                .destination_path
+                .as_ref()
+                .ok_or_else(|| AppError::FileTransferError("Destination path not specified".to_string()))?;
+
+            let mut file = File::create(dest_path).map_err(AppError::IoError)?;
+            let mut buffer = vec![0; CHUNK_SIZE];
+            let mut bytes_received = 0;
+
+            loop {
+                let bytes_read = reader
+                    .read(&mut buffer)
+                    .await
+                    .map_err(|e| AppError::NetworkError(format!("Failed to receive file chunk: {e}")))?;
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                file.write_all(&buffer[..bytes_read])
+                    .map_err(AppError::IoError)?;
+
+                bytes_received += bytes_read as u64;
+
+                // Update transfer status
+                {
+                    let mut transfers = transfers.lock().unwrap();
+                    if let Some(transfer) = transfers.get_mut(transfer_id) {
+                        transfer.bytes_transferred = bytes_received;
+                        if bytes_received >= transfer.file_size {
+                            transfer.status = TransferStatus::Completed;
+                        }
+                    }
+                }
+            }
+
+            info!("File transfer completed: {}", transfer_id);
+        }
+    } else if line.starts_with("REQUEST_FILE:") {
+        // This is a request for file data
+        let transfer_id = line.strip_prefix("REQUEST_FILE:").unwrap();
+        
+        // Get the transfer
+        let transfer = {
+            let transfers = transfers.lock().unwrap();
+            transfers
+                .get(transfer_id)
+                .cloned()
+                .ok_or_else(|| AppError::TransferNotFound(transfer_id.to_string()))?
+        };
+
+        // We are the sender, send the file data
+        if transfer.sender_id == local_user.id {
+            let source_path = transfer
+                .source_path
+                .as_ref()
+                .ok_or_else(|| AppError::FileTransferError("Source path not specified".to_string()))?;
+
+            let mut file = File::open(source_path).map_err(AppError::IoError)?;
+            let mut buffer = vec![0; CHUNK_SIZE];
+            let mut bytes_sent = 0;
+
+            // Get the underlying stream for writing
+            let mut stream = reader.into_inner();
+
+            loop {
+                let bytes_read = file.read(&mut buffer).map_err(AppError::IoError)?;
+
+                if bytes_read == 0 {
+                    break;
+                }
+
+                stream
+                    .write_all(&buffer[..bytes_read])
+                    .await
+                    .map_err(|e| AppError::NetworkError(format!("Failed to send file chunk: {e}")))?;
+
+                bytes_sent += bytes_read as u64;
+
+                // Update transfer status
+                {
+                    let mut transfers = transfers.lock().unwrap();
+                    if let Some(transfer) = transfers.get_mut(transfer_id) {
+                        transfer.bytes_transferred = bytes_sent;
+                        if bytes_sent >= transfer.file_size {
+                            transfer.status = TransferStatus::Completed;
+                        }
+                    }
+                }
+            }
+
+            info!("File transfer completed: {}", transfer_id);
+        }
     } else {
-        return Err(AppError::FileTransferError("Invalid transfer".to_string()));
+        // Try to parse as JSON transfer request
+        let mut buffer = Vec::new();
+        reader
+            .read_to_end(&mut buffer)
+            .await
+            .map_err(|e| AppError::NetworkError(format!("Failed to read transfer request: {e}")))?;
+
+        // Prepend the line we already read
+        let mut full_buffer = line.as_bytes().to_vec();
+        full_buffer.extend(buffer);
+
+        // Parse the transfer request
+        let transfer: FileTransfer = serde_json::from_slice(&full_buffer)
+            .map_err(AppError::SerializationError)?;
+
+        info!("Received file transfer request: {} from {}", transfer.file_name, transfer.sender_id);
+
+        // Store the transfer if we are the recipient
+        if transfer.recipient_id == local_user.id {
+            let mut transfers = transfers.lock().unwrap();
+            transfers.insert(transfer.id.clone(), transfer.clone());
+        }
     }
 
     Ok(())

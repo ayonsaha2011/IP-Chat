@@ -1,6 +1,6 @@
 use log::{debug, error, info};
 use std::collections::HashMap;
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream as AsyncTcpStream;
@@ -125,11 +125,11 @@ impl ChatManager {
             read: false,
         };
 
-        // Store message
+        // Store message in our sent messages
         {
             let mut messages = self.messages.lock().unwrap();
-            let peer_messages = messages.entry(peer_id.to_string()).or_default();
-            peer_messages.push(message.clone());
+            let sent_messages = messages.entry(self.local_user.id.clone()).or_default();
+            sent_messages.push(message.clone());
         }
 
         // Send message to peer
@@ -150,11 +150,11 @@ impl ChatManager {
             read: false,
         };
 
-        // Store message
+        // Store message in our sent messages
         {
             let mut messages = self.messages.lock().unwrap();
-            let peer_messages = messages.entry(peer_id.to_string()).or_default();
-            peer_messages.push(message.clone());
+            let sent_messages = messages.entry(self.local_user.id.clone()).or_default();
+            sent_messages.push(message.clone());
         }
 
         // Send message to peer
@@ -200,18 +200,52 @@ impl ChatManager {
     /// Gets messages for a specific peer
     pub fn get_messages_for_peer(&self, peer_id: &str) -> Vec<Message> {
         let messages = self.messages.lock().unwrap();
-        messages.get(peer_id).cloned().unwrap_or_default()
+        let mut peer_messages = Vec::new();
+        
+        // Get messages where we are the sender and peer is recipient
+        if let Some(sent_messages) = messages.get(&self.local_user.id) {
+            peer_messages.extend(
+                sent_messages
+                    .iter()
+                    .filter(|msg| msg.recipient_id == peer_id)
+                    .cloned()
+            );
+        }
+        
+        // Get messages where peer is the sender and we are recipient
+        if let Some(received_messages) = messages.get(peer_id) {
+            peer_messages.extend(
+                received_messages
+                    .iter()
+                    .filter(|msg| msg.recipient_id == self.local_user.id)
+                    .cloned()
+            );
+        }
+        
+        // Sort by timestamp
+        peer_messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        peer_messages
     }
 
     /// Gets all messages
     pub fn get_all_messages(&self) -> Vec<Message> {
         let messages = self.messages.lock().unwrap();
-        messages.values().flatten().cloned().collect()
+        let mut all_messages = Vec::new();
+        
+        for peer_messages in messages.values() {
+            all_messages.extend(peer_messages.clone());
+        }
+        
+        // Sort by timestamp
+        all_messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        all_messages
     }
 
     /// Marks messages from a peer as read
     pub fn mark_messages_as_read(&mut self, peer_id: &str) -> AppResult<()> {
         let mut messages = self.messages.lock().unwrap();
+        
+        // Mark messages in the peer's conversation (received messages)
         if let Some(peer_messages) = messages.get_mut(peer_id) {
             for message in peer_messages.iter_mut() {
                 if message.recipient_id == self.local_user.id {
@@ -219,6 +253,7 @@ impl ChatManager {
                 }
             }
         }
+        
         // Always return Ok - it's valid to have no messages for a peer
         Ok(())
     }
@@ -242,7 +277,7 @@ async fn handle_incoming_message(
 
     info!("Received message from {}: {}", message.sender_id, message.content);
 
-    // Store message
+    // Store message in the sender's conversation (for received messages)
     {
         let mut messages = messages.lock().unwrap();
         let peer_messages = messages.entry(message.sender_id.clone()).or_default();

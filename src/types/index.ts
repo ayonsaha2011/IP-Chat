@@ -33,6 +33,8 @@ export interface FileTransfer {
   id: string;
   senderId: string;
   recipientId: string;
+  senderIp?: string;
+  recipientIp?: string;
   fileName: string;
   fileSize: number;
   sourcePath?: string;
