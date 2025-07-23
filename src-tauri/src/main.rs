@@ -4,7 +4,7 @@
 fn main() {
     // Initialize logger for debugging
     env_logger::init();
-    
+
     // Run the application
     ip_chat_lib::run()
 }

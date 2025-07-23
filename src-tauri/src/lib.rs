@@ -1,24 +1,24 @@
-mod discovery;
 mod chat;
+mod discovery;
+mod error;
 mod file_transfer;
 mod models;
-mod error;
 
+use local_ip_address::local_ip;
+use log::{error, info};
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use log::{info, error};
-use local_ip_address::local_ip;
 
-use crate::models::{AppState, User, Message, FileTransfer};
-use crate::discovery::NetworkDiscovery;
 use crate::chat::ChatManager;
+use crate::discovery::NetworkDiscovery;
 use crate::file_transfer::FileTransferManager;
+use crate::models::{AppState, FileTransfer, Message, User};
 
 // Helper function to ensure services are initialized
 async fn ensure_services_initialized(state: &mut AppState) {
     if !state.services_initialized {
         info!("Starting service initialization...");
-        
+
         // Start network services
         info!("Starting network discovery service...");
         if let Err(e) = state.discovery.start_discovery().await {
@@ -26,7 +26,7 @@ async fn ensure_services_initialized(state: &mut AppState) {
         } else {
             info!("Discovery service started successfully");
         }
-        
+
         state.services_initialized = true;
         info!("Services initialization completed");
     } else {
@@ -54,7 +54,9 @@ async fn stop_discovery(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result
 }
 
 #[tauri::command]
-async fn get_discovered_peers(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result<Vec<User>, String> {
+async fn get_discovered_peers(
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
+) -> Result<Vec<User>, String> {
     let state = state.lock().await;
     Ok(state.discovery.get_discovered_peers())
 }
@@ -65,7 +67,10 @@ async fn get_local_user(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result
     let mut state = state.lock().await;
     info!("State locked, ensuring services initialized");
     ensure_services_initialized(&mut state).await;
-    info!("Services initialized, returning local user: {:?}", state.local_user);
+    info!(
+        "Services initialized, returning local user: {:?}",
+        state.local_user
+    );
     Ok(state.local_user.clone())
 }
 
@@ -74,7 +79,7 @@ async fn get_local_user(state: tauri::State<'_, Arc<Mutex<AppState>>>) -> Result
 async fn send_message(
     peer_id: String,
     content: String,
-    state: tauri::State<'_, Arc<Mutex<AppState>>>
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Message, String> {
     let mut state = state.lock().await;
     match state.chat_manager.send_message(&peer_id, &content).await {
@@ -86,7 +91,7 @@ async fn send_message(
 #[tauri::command]
 async fn get_messages(
     peer_id: Option<String>,
-    state: tauri::State<'_, Arc<Mutex<AppState>>>
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<Message>, String> {
     let state = state.lock().await;
     match peer_id {
@@ -98,7 +103,7 @@ async fn get_messages(
 #[tauri::command]
 async fn mark_messages_as_read(
     peer_id: String,
-    state: tauri::State<'_, Arc<Mutex<AppState>>>
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let mut state = state.lock().await;
     match state.chat_manager.mark_messages_as_read(&peer_id) {
@@ -112,18 +117,22 @@ async fn mark_messages_as_read(
 async fn send_file(
     peer_id: String,
     file_path: String,
-    state: tauri::State<'_, Arc<Mutex<AppState>>>
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<FileTransfer, String> {
     let mut state = state.lock().await;
-    
+
     // Get peer information from discovery service
     let peers = state.discovery.get_discovered_peers();
     let peer = peers.iter().find(|p| p.id == peer_id);
-    
+
     match peer {
         Some(peer) => {
             // Create a modified send_file method that takes peer IP
-            match state.file_manager.send_file_with_peer(&peer_id, &file_path, &peer.ip).await {
+            match state
+                .file_manager
+                .send_file_with_peer(&peer_id, &file_path, &peer.ip)
+                .await
+            {
                 Ok(transfer) => Ok(transfer),
                 Err(e) => Err(e.to_string()),
             }
@@ -136,10 +145,14 @@ async fn send_file(
 async fn accept_file_transfer(
     transfer_id: String,
     save_path: String,
-    state: tauri::State<'_, Arc<Mutex<AppState>>>
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let mut state = state.lock().await;
-    match state.file_manager.accept_transfer(&transfer_id, &save_path).await {
+    match state
+        .file_manager
+        .accept_transfer(&transfer_id, &save_path)
+        .await
+    {
         Ok(_) => Ok(()),
         Err(e) => Err(e.to_string()),
     }
@@ -148,7 +161,7 @@ async fn accept_file_transfer(
 #[tauri::command]
 async fn reject_file_transfer(
     transfer_id: String,
-    state: tauri::State<'_, Arc<Mutex<AppState>>>
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let mut state = state.lock().await;
     match state.file_manager.reject_transfer(&transfer_id).await {
@@ -160,7 +173,7 @@ async fn reject_file_transfer(
 #[tauri::command]
 async fn get_file_transfers(
     peer_id: Option<String>,
-    state: tauri::State<'_, Arc<Mutex<AppState>>>
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<FileTransfer>, String> {
     let state = state.lock().await;
     match peer_id {
@@ -172,7 +185,7 @@ async fn get_file_transfers(
 #[tauri::command]
 async fn cancel_file_transfer(
     transfer_id: String,
-    state: tauri::State<'_, Arc<Mutex<AppState>>>
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let mut state = state.lock().await;
     match state.file_manager.cancel_transfer(&transfer_id).await {
@@ -184,7 +197,7 @@ async fn cancel_file_transfer(
 #[tauri::command]
 async fn update_username(
     username: String,
-    state: tauri::State<'_, Arc<Mutex<AppState>>>
+    state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<User, String> {
     let mut state = state.lock().await;
     state.local_user.name = username;
@@ -205,9 +218,9 @@ pub fn run() {
             std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1))
         }
     };
-    
+
     info!("Local IP address: {}", local_ip);
-    
+
     // Create local user
     let local_user = User {
         id: uuid::Uuid::new_v4().to_string(),
@@ -217,14 +230,14 @@ pub fn run() {
         ip: local_ip.to_string(),
         last_seen: chrono::Utc::now(),
     };
-    
+
     info!("Local user: {:?}", local_user);
-    
+
     // Initialize app state
     let network_discovery = NetworkDiscovery::new(local_user.clone());
     let chat_manager = ChatManager::new(local_user.clone());
     let file_manager = FileTransferManager::new(local_user.clone());
-    
+
     let app_state = Arc::new(Mutex::new(AppState {
         local_user,
         discovery: network_discovery,
@@ -232,7 +245,7 @@ pub fn run() {
         file_manager,
         services_initialized: false,
     }));
-    
+
     // Build and run the application
     tauri::Builder::default()
         .setup(|_app| {

@@ -1,8 +1,8 @@
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
-use crate::discovery::NetworkDiscovery;
 use crate::chat::ChatManager;
+use crate::discovery::NetworkDiscovery;
 use crate::file_transfer::FileTransferManager;
 
 /// Represents a user in the network

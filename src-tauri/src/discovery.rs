@@ -1,14 +1,14 @@
+use log::{debug, error, info, warn};
+use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+use serde_json;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;
-use mdns_sd::{ServiceDaemon, ServiceInfo, ServiceEvent};
-use log::{info, error, debug, warn};
-use serde_json;
 
-use crate::models::User;
 use crate::error::{AppError, AppResult};
+use crate::models::User;
 
 const SERVICE_TYPE: &str = "_ip-chat._tcp.local.";
 const SERVICE_PORT: u16 = 8765;
@@ -34,7 +34,7 @@ impl NetworkDiscovery {
     /// Creates a new NetworkDiscovery instance
     pub fn new(local_user: User) -> Self {
         let service_name = format!("ip-chat-{}", local_user.id);
-        
+
         NetworkDiscovery {
             local_user,
             peers: Arc::new(Mutex::new(HashMap::new())),
@@ -44,27 +44,27 @@ impl NetworkDiscovery {
             stop_tx: None,
         }
     }
-    
+
     /// Starts the network discovery service
     pub async fn start_discovery(&mut self) -> AppResult<()> {
         // Check if discovery is already running
         {
             let is_running = self.is_running.lock().unwrap();
             if *is_running {
-                return Err(AppError::DiscoveryError("Discovery already running".to_string()));
+                return Err(AppError::DiscoveryError(
+                    "Discovery already running".to_string(),
+                ));
             }
         }
-        
+
         // Create mDNS daemon
-        let daemon = ServiceDaemon::new().map_err(|e| {
-            AppError::MdnsError(format!("Failed to create mDNS daemon: {}", e))
-        })?;
-        
+        let daemon = ServiceDaemon::new()
+            .map_err(|e| AppError::MdnsError(format!("Failed to create mDNS daemon: {}", e)))?;
+
         // Register our service
-        let user_json = serde_json::to_string(&self.local_user).map_err(|e| {
-            AppError::SerializationError(e)
-        })?;
-        
+        let user_json =
+            serde_json::to_string(&self.local_user).map_err(|e| AppError::SerializationError(e))?;
+
         let service_info = ServiceInfo::new(
             SERVICE_TYPE,
             &self.service_name,
@@ -76,32 +76,31 @@ impl NetworkDiscovery {
                 txt_records.insert("user".to_string(), user_json);
                 txt_records
             }),
-        ).map_err(|e| {
-            AppError::MdnsError(format!("Failed to create service info: {}", e))
-        })?;
-        
-        daemon.register(service_info).map_err(|e| {
-            AppError::MdnsError(format!("Failed to register service: {}", e))
-        })?;
-        
+        )
+        .map_err(|e| AppError::MdnsError(format!("Failed to create service info: {}", e)))?;
+
+        daemon
+            .register(service_info)
+            .map_err(|e| AppError::MdnsError(format!("Failed to register service: {}", e)))?;
+
         // Browse for other services
-        let browse_handle = daemon.browse(SERVICE_TYPE).map_err(|e| {
-            AppError::MdnsError(format!("Failed to browse for services: {}", e))
-        })?;
-        
+        let browse_handle = daemon
+            .browse(SERVICE_TYPE)
+            .map_err(|e| AppError::MdnsError(format!("Failed to browse for services: {}", e)))?;
+
         // Set up channel for service events
         let (event_tx, mut event_rx) = mpsc::channel::<ServiceEvent>(32);
-        
+
         // Set up channel for stopping discovery
         let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
-        
+
         // Create a thread to handle the receiver
         let browse_handle_clone = browse_handle.clone();
         std::thread::spawn(move || {
             loop {
                 // Get a new receiver for each iteration
                 let receiver = browse_handle_clone.recv();
-                
+
                 // Process the event
                 match receiver {
                     Ok(event) => {
@@ -114,31 +113,31 @@ impl NetworkDiscovery {
                         break;
                     }
                 }
-                
+
                 // Sleep a bit to avoid busy waiting
                 std::thread::sleep(Duration::from_millis(100));
             }
         });
-        
+
         // Set running flag
         {
             let mut is_running = self.is_running.lock().unwrap();
             *is_running = true;
         }
-        
+
         // Store daemon and stop channel
         self.daemon = Some(daemon);
         self.stop_tx = Some(stop_tx);
-        
+
         // Clone necessary values for the task
         let peers = Arc::clone(&self.peers);
         let local_id = self.local_user.id.clone();
         let is_running = Arc::clone(&self.is_running);
-        
+
         // Spawn task to handle service events
         tokio::spawn(async move {
             let mut cleanup_interval = interval(Duration::from_secs(DISCOVERY_INTERVAL));
-            
+
             loop {
                 tokio::select! {
                     // Check for stop signal
@@ -146,7 +145,7 @@ impl NetworkDiscovery {
                         debug!("Stopping discovery");
                         break;
                     }
-                    
+
                     // Process service events
                     Some(event) = event_rx.recv() => {
                         match event {
@@ -176,7 +175,7 @@ impl NetworkDiscovery {
                             _ => {} // Ignore other events
                         }
                     }
-                    
+
                     // Periodic cleanup of stale peers
                     _ = cleanup_interval.tick() => {
                         let now = chrono::Utc::now();
@@ -188,78 +187,81 @@ impl NetworkDiscovery {
                     }
                 }
             }
-            
+
             // Set running flag to false when exiting
             let mut is_running_guard = is_running.lock().unwrap();
             *is_running_guard = false;
         });
-        
+
         info!("Network discovery started");
         Ok(())
     }
-    
+
     /// Stops the network discovery service
     pub async fn stop_discovery(&mut self) -> AppResult<()> {
         // Check if discovery is running
         {
             let is_running = self.is_running.lock().unwrap();
             if !*is_running {
-                return Err(AppError::DiscoveryError("Discovery not running".to_string()));
+                return Err(AppError::DiscoveryError(
+                    "Discovery not running".to_string(),
+                ));
             }
         }
-        
+
         // Send stop signal
         if let Some(tx) = &self.stop_tx {
             if let Err(e) = tx.send(()).await {
                 error!("Failed to send stop signal: {}", e);
             }
         }
-        
+
         // Unregister service and shutdown daemon
         if let Some(daemon) = &self.daemon {
             if let Err(e) = daemon.unregister(&self.service_name) {
                 warn!("Failed to unregister service: {}", e);
             }
-            
+
             // No need to shutdown the daemon as it will be dropped
         }
-        
+
         // Clear state
         self.daemon = None;
         self.stop_tx = None;
-        
+
         // Clear peers
         {
             let mut peers = self.peers.lock().unwrap();
             peers.clear();
         }
-        
+
         info!("Network discovery stopped");
         Ok(())
     }
-    
+
     /// Gets the list of discovered peers
     pub fn get_discovered_peers(&self) -> Vec<User> {
         let peers = self.peers.lock().unwrap();
         peers.values().cloned().collect()
     }
-    
+
     /// Broadcasts an update to the local user info
     pub async fn broadcast_user_update(&self) -> AppResult<()> {
         // Check if discovery is running
         {
             let is_running = self.is_running.lock().unwrap();
             if !*is_running {
-                return Err(AppError::DiscoveryError("Discovery not running".to_string()));
+                return Err(AppError::DiscoveryError(
+                    "Discovery not running".to_string(),
+                ));
             }
         }
-        
+
         // Update service TXT record with new user info
         if let Some(daemon) = &self.daemon {
-            let user_json = serde_json::to_string(&self.local_user).map_err(|e| {
-                AppError::SerializationError(e)
-            })?;
-            
+            let user_json = serde_json::to_string(&self.local_user)
+                .map_err(|e| AppError::SerializationError(e))?;
+
             let service_info = ServiceInfo::new(
                 SERVICE_TYPE,
                 &self.service_name,
@@ -271,18 +273,19 @@ impl NetworkDiscovery {
                     txt_records.insert("user".to_string(), user_json);
                     txt_records
                 }),
-            ).map_err(|e| {
-                AppError::MdnsError(format!("Failed to create service info: {}", e))
-            })?;
-            
-            daemon.register(service_info).map_err(|e| {
-                AppError::MdnsError(format!("Failed to update service: {}", e))
-            })?;
-            
+            )
+            .map_err(|e| AppError::MdnsError(format!("Failed to create service info: {}", e)))?;
+
+            daemon
+                .register(service_info)
+                .map_err(|e| AppError::MdnsError(format!("Failed to update service: {}", e)))?;
+
             info!("Broadcast user update");
             Ok(())
         } else {
-            Err(AppError::DiscoveryError("Daemon not initialized".to_string()))
+            Err(AppError::DiscoveryError(
+                "Daemon not initialized".to_string(),
+            ))
         }
     }
 }
