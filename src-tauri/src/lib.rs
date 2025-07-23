@@ -241,37 +241,16 @@ async fn update_username(
     Ok(state.local_user.clone())
 }
 
-/// Generate a network-based user ID using the default gateway IP and hostname
-fn generate_network_based_id() -> String {
-    match default_net::get_default_gateway() {
-        Ok(gateway) => {
-            // Use the gateway IP and hostname to create a consistent ID for the network
-            let gateway_ip = gateway.ip_addr.to_string();
-            let hostname = hostname::get()
-                .map(|h| h.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "unknown".to_string());
-            
-            // Combine gateway IP and hostname for uniqueness within the network
-            let combined_key = format!("{}-{}", gateway_ip, hostname);
-            let mut hasher = DefaultHasher::new();
-            combined_key.hash(&mut hasher);
-            let hash = hasher.finish();
-            
-            // Create a shorter, readable ID from the hash
-            format!("net-{:x}", hash & 0xFFFFFFFFFFFF)
-        }
-        Err(e) => {
-            error!("Failed to get default gateway, falling back to hostname-based ID: {e}");
-            // Fallback to hostname-based ID if we can't get gateway
-            let hostname = hostname::get()
-                .map(|h| h.to_string_lossy().to_string())
-                .unwrap_or_else(|_| "unknown".to_string());
-            let mut hasher = DefaultHasher::new();
-            hostname.hash(&mut hasher);
-            let hash = hasher.finish();
-            format!("host-{:x}", hash & 0xFFFFFFFFFFFF)
-        }
-    }
+
+/// Generate a unique user ID using hostname to distinguish between devices
+fn generate_user_id() -> String {
+    let hostname = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+    let mut hasher = DefaultHasher::new();
+    hostname.hash(&mut hasher);
+    let hash = hasher.finish();
+    format!("user-{:x}", hash & 0xFFFFFFFF)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -289,7 +268,7 @@ pub fn run() {
 
     // Create local user
     let local_user = User {
-        id: generate_network_based_id(),
+        id: generate_user_id(),
         name: hostname::get()
             .map(|h| h.to_string_lossy().to_string())
             .unwrap_or_else(|_| "Unknown User".to_string()),
