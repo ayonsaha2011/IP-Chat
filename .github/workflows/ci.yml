@@ -54,7 +54,7 @@ jobs:
     - name: Install system dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev
+        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev
         
     - name: Format check
       run: cd src-tauri && cargo fmt --all -- --check
@@ -100,7 +100,7 @@ jobs:
       if: matrix.platform == 'ubuntu-20.04'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev
+        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev
         
     - name: Install frontend dependencies
       run: npm ci

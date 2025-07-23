@@ -15,7 +15,6 @@ import {
   AlertDescription,
   Badge,
   IconButton,
-  Button,
   Tabs,
   TabList,
   Tab,
@@ -111,7 +110,6 @@ function App() {
   // State
   const [isInitialized, setIsInitialized] = createSignal(false);
   const [initError, setInitError] = createSignal<string | null>(null);
-  const [activeTab, setActiveTab] = createSignal(0);
   const [renderCount, setRenderCount] = createSignal(0);
   const [forceUpdate, setForceUpdate] = createSignal(0);
   const { colorMode, toggleColorMode } = useColorMode();
