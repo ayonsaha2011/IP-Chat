@@ -228,12 +228,9 @@ impl ChatManager {
                     message.read = true;
                 }
             }
-            Ok(())
-        } else {
-            Err(AppError::ChatError(format!(
-                "No messages found for peer {peer_id}"
-            )))
         }
+        // Always return Ok - it's valid to have no messages for a peer
+        Ok(())
     }
 }
 
