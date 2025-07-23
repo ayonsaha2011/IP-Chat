@@ -1,4 +1,4 @@
-use log::{debug, info, warn};
+use log::{debug, error, info, warn};
 use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -27,6 +27,8 @@ pub struct NetworkDiscovery {
     is_running: Arc<Mutex<bool>>,
     /// Channel for stopping discovery
     stop_tx: Option<mpsc::Sender<()>>,
+    /// Flag indicating if service is registered
+    service_registered: Arc<Mutex<bool>>,
 }
 
 impl Drop for NetworkDiscovery {
@@ -36,9 +38,14 @@ impl Drop for NetworkDiscovery {
             *is_running = false;
         }
 
-        // Unregister service if daemon exists
-        if let Some(daemon) = &self.daemon {
-            let _ = daemon.unregister(&self.service_name);
+        // Only try to unregister if service was actually registered
+        if let Ok(service_registered) = self.service_registered.lock() {
+            if *service_registered {
+                if let Some(daemon) = &self.daemon {
+                    // Ignore errors during drop - best effort cleanup
+                    let _ = daemon.unregister(&self.service_name);
+                }
+            }
         }
     }
 }
@@ -57,6 +64,7 @@ impl NetworkDiscovery {
             service_name,
             is_running: Arc::new(Mutex::new(false)),
             stop_tx: None,
+            service_registered: Arc::new(Mutex::new(false)),
         }
     }
 
@@ -94,9 +102,18 @@ impl NetworkDiscovery {
         )
         .map_err(|e| AppError::MdnsError(format!("Failed to create service info: {e}")))?;
 
-        daemon
-            .register(service_info)
-            .map_err(|e| AppError::MdnsError(format!("Failed to register service: {e}")))?;
+        match daemon.register(service_info) {
+            Ok(_) => {
+                info!("Successfully registered mDNS service: {}", self.service_name);
+                // Mark service as registered
+                let mut service_registered = self.service_registered.lock().unwrap();
+                *service_registered = true;
+            }
+            Err(e) => {
+                error!("Failed to register mDNS service {}: {}", self.service_name, e);
+                return Err(AppError::MdnsError(format!("Failed to register service: {e}")));
+            }
+        }
 
         // Browse for other services
         let browse_handle = daemon
@@ -276,8 +293,26 @@ impl NetworkDiscovery {
         // Unregister service and shutdown daemon
         if let Some(daemon) = self.daemon.take() {
             // Only unregister if the service was actually registered
-            let _ = daemon.unregister(&self.service_name); // Ignore unregister errors
-                                                           // Give the daemon time to clean up
+            let should_unregister = {
+                let service_registered = self.service_registered.lock().unwrap();
+                *service_registered
+            };
+            
+            if should_unregister {
+                match daemon.unregister(&self.service_name) {
+                    Ok(_) => {
+                        info!("Successfully unregistered service: {}", self.service_name);
+                        // Mark service as no longer registered
+                        let mut service_registered = self.service_registered.lock().unwrap();
+                        *service_registered = false;
+                    }
+                    Err(e) => {
+                        warn!("Failed to unregister service {}: {}", self.service_name, e);
+                    }
+                }
+            }
+            
+            // Give the daemon time to clean up
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
 
@@ -314,8 +349,15 @@ impl NetworkDiscovery {
             let user_json =
                 serde_json::to_string(&self.local_user).map_err(AppError::SerializationError)?;
 
-            // First unregister the old service
-            let _ = daemon.unregister(&self.service_name);
+            // First unregister the old service if it was registered
+            let should_unregister = {
+                let service_registered = self.service_registered.lock().unwrap();
+                *service_registered
+            };
+            
+            if should_unregister {
+                let _ = daemon.unregister(&self.service_name);
+            }
 
             // Give some time for unregistration
             tokio::time::sleep(Duration::from_millis(100)).await;
@@ -337,6 +379,12 @@ impl NetworkDiscovery {
             daemon
                 .register(service_info)
                 .map_err(|e| AppError::MdnsError(format!("Failed to update service: {e}")))?;
+
+            // Mark service as registered again
+            {
+                let mut service_registered = self.service_registered.lock().unwrap();
+                *service_registered = true;
+            }
 
             info!("Broadcast user update");
             Ok(())
