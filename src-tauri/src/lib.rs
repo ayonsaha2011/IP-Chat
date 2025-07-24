@@ -10,11 +10,33 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use tauri::{AppHandle, Emitter};
 
 use crate::chat::ChatManager;
 use crate::discovery::NetworkDiscovery;
 use crate::file_transfer::FileTransferManager;
 use crate::models::{AppState, FileTransfer, Message, User};
+
+// Global app handle for event emission
+static mut APP_HANDLE: Option<AppHandle> = None;
+
+// Set the app handle for event emission
+pub fn set_app_handle(handle: AppHandle) {
+    unsafe {
+        APP_HANDLE = Some(handle);
+    }
+}
+
+// Emit events to frontend
+pub fn emit_event<T: serde::Serialize + Clone>(event: &str, payload: T) {
+    unsafe {
+        if let Some(handle) = &APP_HANDLE {
+            if let Err(e) = handle.emit(event, payload) {
+                error!("Failed to emit event {}: {}", event, e);
+            }
+        }
+    }
+}
 
 // Helper function to ensure services are initialized
 async fn ensure_services_initialized(state: &mut AppState) {
@@ -142,6 +164,10 @@ async fn send_message(
                           message.id, message.sender_id, message.recipient_id);
                     info!("Message timestamp: {}, Content length: {}", 
                           message.timestamp, message.content.len());
+                    
+                    // Emit message update event
+                    emit_event("message_sent", message.clone());
+                    
                     Ok(message)
                 },
                 Err(e) => {
@@ -199,7 +225,11 @@ async fn mark_messages_as_read(
     
     info!("Marking messages as read for peer: {}", peer_id);
     match state.chat_manager.mark_messages_as_read(&peer_id) {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            // Emit messages read event
+            emit_event("messages_read", peer_id);
+            Ok(())
+        },
         Err(e) => Err(e.to_string()),
     }
 }
@@ -225,7 +255,11 @@ async fn send_file(
                 .send_file_with_peer(&peer_id, &file_path, &peer.ip)
                 .await
             {
-                Ok(transfer) => Ok(transfer),
+                Ok(transfer) => {
+                    // Emit file transfer update event
+                    emit_event("file_transfer_update", transfer.clone());
+                    Ok(transfer)
+                },
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -245,7 +279,12 @@ async fn accept_file_transfer(
         .accept_transfer(&transfer_id, &save_path)
         .await
     {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            // Emit file transfer update event
+            let transfers = state.file_manager.get_all_transfers();
+            emit_event("file_transfers_update", transfers);
+            Ok(())
+        },
         Err(e) => Err(e.to_string()),
     }
 }
@@ -257,7 +296,12 @@ async fn reject_file_transfer(
 ) -> Result<(), String> {
     let mut state = state.lock().await;
     match state.file_manager.reject_transfer(&transfer_id).await {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            // Emit file transfer update event
+            let transfers = state.file_manager.get_all_transfers();
+            emit_event("file_transfers_update", transfers);
+            Ok(())
+        },
         Err(e) => Err(e.to_string()),
     }
 }
@@ -281,7 +325,12 @@ async fn cancel_file_transfer(
 ) -> Result<(), String> {
     let mut state = state.lock().await;
     match state.file_manager.cancel_transfer(&transfer_id).await {
-        Ok(_) => Ok(()),
+        Ok(_) => {
+            // Emit file transfer update event
+            let transfers = state.file_manager.get_all_transfers();
+            emit_event("file_transfers_update", transfers);
+            Ok(())
+        },
         Err(e) => Err(e.to_string()),
     }
 }
@@ -297,6 +346,10 @@ async fn update_username(
     if let Err(e) = state.discovery.broadcast_user_update().await {
         error!("Failed to broadcast user update: {e}");
     }
+    
+    // Emit user update event
+    emit_event("user_updated", state.local_user.clone());
+    
     Ok(state.local_user.clone())
 }
 
@@ -354,7 +407,10 @@ pub fn run() {
     let app_state_clone = Arc::clone(&app_state);
 
     tauri::Builder::default()
-        .setup(move |_app| {
+        .setup(move |app| {
+            // Set app handle for event emission
+            set_app_handle(app.handle().clone());
+            
             // Start services automatically on app startup
             tauri::async_runtime::spawn(async move {
                 let mut state = app_state_clone.lock().await;

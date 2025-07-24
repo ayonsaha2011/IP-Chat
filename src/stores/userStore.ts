@@ -1,5 +1,6 @@
 import { createSignal } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { User } from '../types';
 import toast from 'solid-toast';
 
@@ -44,18 +45,55 @@ async function initUserStore() {
       // Don't throw here, just log the warning and continue
     }
     
-    // Set up periodic peer refresh after a delay
-    setTimeout(() => {
-      const intervalId = setInterval(() => {
-        refreshPeers().catch(() => {});
-      }, 10000); // Refresh every 10 seconds
-      
-      // Clean up on window unload
-      window.addEventListener('beforeunload', () => {
-        clearInterval(intervalId);
-        stopDiscovery().catch(() => {});
+    // Set up event listeners for real-time peer updates
+    const setupEventListeners = async () => {
+      // Listen for peer discovered events
+      const unlistenPeerDiscovered = await listen<User>('peer_discovered', (event) => {
+        const peer = event.payload;
+        setPeers(prev => {
+          // Check if peer already exists to prevent duplicates
+          const exists = prev.some(p => p.id === peer.id);
+          if (!exists) {
+            return [...prev, peer];
+          } else {
+            // Update existing peer info
+            return prev.map(p => p.id === peer.id ? peer : p);
+          }
+        });
       });
-    }, 2000); // Start periodic refresh after 2 seconds
+      
+      // Listen for peers updated events
+      const unlistenPeersUpdated = await listen<User[]>('peers_updated', (event) => {
+        const peersList = event.payload;
+        setPeers(peersList);
+      });
+      
+      // Listen for user updated events
+      const unlistenUserUpdated = await listen<User>('user_updated', (event) => {
+        const user = event.payload;
+        setLocalUser(user);
+      });
+      
+      // Store cleanup functions
+      (window as any).__userStoreCleanup = () => {
+        unlistenPeerDiscovered();
+        unlistenPeersUpdated();
+        unlistenUserUpdated();
+      };
+    };
+    
+    // Setup event listeners
+    setupEventListeners().catch(err => {
+      console.error('Failed to setup user event listeners:', err);
+    });
+    
+    // Clean up on window unload
+    window.addEventListener('beforeunload', () => {
+      if ((window as any).__userStoreCleanup) {
+        (window as any).__userStoreCleanup();
+      }
+      stopDiscovery().catch(() => {});
+    });
     
     
   } catch (err) {

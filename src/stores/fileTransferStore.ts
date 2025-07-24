@@ -1,5 +1,6 @@
 import { createSignal } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { FileTransfer, TransferStatus } from '../types';
 import { userStore } from './userStore';
@@ -40,34 +41,47 @@ async function initFileTransferStore() {
       // Don't fail initialization if transfers can't be loaded
     }
     
-    // Set up periodic transfer refresh with proper cleanup
-    let intervalId: NodeJS.Timeout | null = null;
-    
-    const startRefreshInterval = () => {
-      if (!intervalId) {
-        intervalId = setInterval(() => {
-          refreshTransfers().catch(err => {
-            // Failed to refresh transfers
-          });
-        }, 2000); // Refresh every 2 seconds
-      }
+    // Set up event listeners for real-time file transfer updates
+    const setupEventListeners = async () => {
+      // Listen for file transfer update events
+      const unlistenFileTransferUpdate = await listen<FileTransfer>('file_transfer_update', (event) => {
+        const transfer = event.payload;
+        setTransfers(prev => {
+          // Check if transfer already exists to prevent duplicates
+          const exists = prev.some(t => t.id === transfer.id);
+          if (!exists) {
+            return [...prev, transfer];
+          } else {
+            // Update existing transfer
+            return prev.map(t => t.id === transfer.id ? transfer : t);
+          }
+        });
+      });
+      
+      // Listen for file transfers updated events
+      const unlistenFileTransfersUpdate = await listen<FileTransfer[]>('file_transfers_update', (event) => {
+        const transfersList = event.payload;
+        setTransfers(transfersList);
+      });
+      
+      // Store cleanup functions
+      (window as any).__fileTransferStoreCleanup = () => {
+        unlistenFileTransferUpdate();
+        unlistenFileTransfersUpdate();
+      };
     };
     
-    const stopRefreshInterval = () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-    };
-    
-    // Start the interval
-    startRefreshInterval();
+    // Setup event listeners
+    setupEventListeners().catch(err => {
+      console.error('Failed to setup file transfer event listeners:', err);
+    });
     
     // Clean up on window unload
-    window.addEventListener('beforeunload', stopRefreshInterval);
-    
-    // Export cleanup function for external use
-    (window as any).__fileTransferStoreCleanup = stopRefreshInterval;
+    window.addEventListener('beforeunload', () => {
+      if ((window as any).__fileTransferStoreCleanup) {
+        (window as any).__fileTransferStoreCleanup();
+      }
+    });
     
     
   } catch (err) {

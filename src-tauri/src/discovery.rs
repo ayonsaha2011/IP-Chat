@@ -8,6 +8,7 @@ use tokio::time::interval;
 
 use crate::error::{AppError, AppResult};
 use crate::models::User;
+use crate::emit_event;
 
 const SERVICE_TYPE: &str = "_ip-chat._tcp.local.";
 const SERVICE_PORT: u16 = 8765;
@@ -221,7 +222,10 @@ impl NetworkDiscovery {
                                                     user.last_seen = chrono::Utc::now();
                                                     info!("Discovered peer: {} at {}", user.name, user.ip);
                                                     let mut peers_map = peers.lock().unwrap();
-                                                    peers_map.insert(user.id.clone(), user);
+                                                    peers_map.insert(user.id.clone(), user.clone());
+                                                    
+                                                    // Emit peer discovered event
+                                                    emit_event("peer_discovered", user);
                                                 }
                                             }
                                             Err(e) => {
@@ -243,6 +247,9 @@ impl NetworkDiscovery {
                                 let after_count = peers_map.len();
                                 if before_count != after_count {
                                     info!("Removed {} peer(s) from discovery", before_count - after_count);
+                                    // Emit peers updated event
+                                    let peers_list: Vec<User> = peers_map.values().cloned().collect();
+                                    emit_event("peers_updated", peers_list);
                                 }
                             }
                             ServiceEvent::SearchStarted(service_type) => {
@@ -269,6 +276,9 @@ impl NetworkDiscovery {
                         let after_count = peers_map.len();
                         if before_count != after_count {
                             info!("Cleaned up {} stale peer(s)", before_count - after_count);
+                            // Emit peers updated event
+                            let peers_list: Vec<User> = peers_map.values().cloned().collect();
+                            emit_event("peers_updated", peers_list);
                         }
                         info!("Current peer count: {after_count}");
                     }

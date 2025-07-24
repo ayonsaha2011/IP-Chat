@@ -9,6 +9,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 use crate::models::{Message, User};
+use crate::emit_event;
 
 #[allow(dead_code)]
 const CHAT_PORT: u16 = 8765;
@@ -317,6 +318,9 @@ async fn handle_incoming_message(
         info!("ChatManager: Stored incoming message, total messages from {}: {}", 
               message.sender_id, peer_messages.len());
     }
+
+    // Emit message received event
+    emit_event("message_received", message);
 
     info!("ChatManager: Successfully processed incoming message");
     Ok(())
