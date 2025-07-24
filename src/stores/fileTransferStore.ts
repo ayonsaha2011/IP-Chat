@@ -11,11 +11,20 @@ const [activeTransferId, setActiveTransferId] = createSignal<string | null>(null
 const [isLoading, setIsLoading] = createSignal(true);
 const [error, setError] = createSignal<string | null>(null);
 
+// Track initialization state
+let isInitialized = false;
+
 // Initialize the file transfer store
 async function initFileTransferStore() {
+  // Prevent multiple initialization
+  if (isInitialized) {
+    return;
+  }
+  
   try {
     setIsLoading(true);
     setError(null);
+    isInitialized = true;
     
     
     // Load transfers (with timeout to prevent hanging)
@@ -31,17 +40,34 @@ async function initFileTransferStore() {
       // Don't fail initialization if transfers can't be loaded
     }
     
-    // Set up periodic transfer refresh
-    const intervalId = setInterval(() => {
-      refreshTransfers().catch(err => {
-        // Failed to refresh transfers
-      });
-    }, 2000); // Refresh every 2 seconds
+    // Set up periodic transfer refresh with proper cleanup
+    let intervalId: NodeJS.Timeout | null = null;
+    
+    const startRefreshInterval = () => {
+      if (!intervalId) {
+        intervalId = setInterval(() => {
+          refreshTransfers().catch(err => {
+            // Failed to refresh transfers
+          });
+        }, 2000); // Refresh every 2 seconds
+      }
+    };
+    
+    const stopRefreshInterval = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+    
+    // Start the interval
+    startRefreshInterval();
     
     // Clean up on window unload
-    window.addEventListener('beforeunload', () => {
-      clearInterval(intervalId);
-    });
+    window.addEventListener('beforeunload', stopRefreshInterval);
+    
+    // Export cleanup function for external use
+    (window as any).__fileTransferStoreCleanup = stopRefreshInterval;
     
     
   } catch (err) {

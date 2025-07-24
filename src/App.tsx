@@ -58,6 +58,15 @@ function App() {
   // Cleanup on unmount
   onCleanup(async () => {
     try {
+      // Clean up all store intervals
+      if ((window as any).__chatStoreCleanup) {
+        (window as any).__chatStoreCleanup();
+      }
+      if ((window as any).__fileTransferStoreCleanup) {
+        (window as any).__fileTransferStoreCleanup();
+      }
+      
+      // Clean up user store
       await userStore.cleanup();
     } catch (err) {
       // Ignore cleanup errors

@@ -11,11 +11,20 @@ const [activeConversationId, setActiveConversationId] = createSignal<string | nu
 const [isLoading, setIsLoading] = createSignal(true);
 const [error, setError] = createSignal<string | null>(null);
 
+// Track initialization state
+let isInitialized = false;
+
 // Initialize the chat store
 async function initChatStore() {
+  // Prevent multiple initialization
+  if (isInitialized) {
+    return;
+  }
+  
   try {
     setIsLoading(true);
     setError(null);
+    isInitialized = true;
     
     
     // Load messages (with timeout to prevent hanging)
@@ -31,17 +40,34 @@ async function initChatStore() {
       // Don't fail initialization if messages can't be loaded
     }
     
-    // Set up periodic message refresh
-    const intervalId = setInterval(() => {
-      refreshMessages().catch(err => {
-        // Failed to refresh messages
-      });
-    }, 5000); // Refresh every 5 seconds
+    // Set up periodic message refresh with proper cleanup
+    let intervalId: NodeJS.Timeout | null = null;
+    
+    const startRefreshInterval = () => {
+      if (!intervalId) {
+        intervalId = setInterval(() => {
+          refreshMessages().catch(err => {
+            // Failed to refresh messages
+          });
+        }, 5000); // Refresh every 5 seconds
+      }
+    };
+    
+    const stopRefreshInterval = () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+    
+    // Start the interval
+    startRefreshInterval();
     
     // Clean up on window unload
-    window.addEventListener('beforeunload', () => {
-      clearInterval(intervalId);
-    });
+    window.addEventListener('beforeunload', stopRefreshInterval);
+    
+    // Export cleanup function for external use
+    (window as any).__chatStoreCleanup = stopRefreshInterval;
     
     
   } catch (err) {

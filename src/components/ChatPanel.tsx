@@ -41,14 +41,29 @@ const ChatPanel: Component = () => {
     }
   });
   
-  // Set up periodic refresh
-  const intervalId = setInterval(() => {
-    chatStore.refreshMessages();
-  }, 2000);
+  // Set up periodic refresh with proper cleanup
+  let intervalId: NodeJS.Timeout | null = null;
+  
+  // Only start refresh when there's an active conversation
+  createEffect(() => {
+    const active = activeConversation();
+    
+    if (active && !intervalId) {
+      intervalId = setInterval(() => {
+        chatStore.refreshMessages();
+      }, 2000);
+    } else if (!active && intervalId) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
+  });
   
   // Clean up on unmount
   onCleanup(() => {
-    clearInterval(intervalId);
+    if (intervalId) {
+      clearInterval(intervalId);
+      intervalId = null;
+    }
   });
   
   // Send message
@@ -129,7 +144,7 @@ const ChatPanel: Component = () => {
         p="$4"
         ref={setScrollRef}
       >
-        <VStack spacing="$4" pb="$4">
+        <VStack spacing="$4" pb="$4" alignItems="stretch">
           <Show
             when={activeConversation()?.messages.length}
             fallback={
