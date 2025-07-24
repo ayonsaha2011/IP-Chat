@@ -1,5 +1,6 @@
 import { createSignal } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { Message, Conversation } from '../types';
 import { createConversations } from '../utils';
 import toast from 'solid-toast';
@@ -40,34 +41,99 @@ async function initChatStore() {
       // Don't fail initialization if messages can't be loaded
     }
     
-    // Set up periodic message refresh with proper cleanup
-    let intervalId: NodeJS.Timeout | null = null;
-    
-    const startRefreshInterval = () => {
-      if (!intervalId) {
-        intervalId = setInterval(() => {
-          refreshMessages().catch(err => {
-            // Failed to refresh messages
-          });
-        }, 5000); // Refresh every 5 seconds
-      }
+    // Set up event listeners for real-time updates
+    const setupEventListeners = async () => {
+      // Listen for message sent events
+      const unlistenMessageSent = await listen<Message>('message_sent', (event) => {
+        const message = event.payload;
+        setMessages(prev => {
+          // Check if message already exists to prevent duplicates
+          const exists = prev.some(m => m.id === message.id);
+          if (!exists) {
+            return [...prev, message];
+          }
+          return prev;
+        });
+        
+        // Update conversations
+        const globalUserStore = (window as any).__userStore;
+        if (globalUserStore) {
+          const localUserId = globalUserStore.localUser()?.id;
+          const peers = globalUserStore.peers();
+          if (localUserId) {
+            updateConversations(messages(), { localUserId, peers });
+          }
+        }
+      });
+      
+      // Listen for message received events
+      const unlistenMessageReceived = await listen<Message>('message_received', (event) => {
+        const message = event.payload;
+        setMessages(prev => {
+          // Check if message already exists to prevent duplicates
+          const exists = prev.some(m => m.id === message.id);
+          if (!exists) {
+            return [...prev, message];
+          }
+          return prev;
+        });
+        
+        // Update conversations
+        const globalUserStore = (window as any).__userStore;
+        if (globalUserStore) {
+          const localUserId = globalUserStore.localUser()?.id;
+          const peers = globalUserStore.peers();
+          if (localUserId) {
+            updateConversations(messages(), { localUserId, peers });
+          }
+        }
+        
+        // Show notification for new messages
+        toast.success(`New message from ${message.senderId}`);
+      });
+      
+      // Listen for messages read events
+      const unlistenMessagesRead = await listen<string>('messages_read', (event) => {
+        const peerId = event.payload;
+        // Update messages read status
+        setMessages(prev => 
+          prev.map(msg => 
+            msg.senderId === peerId && !msg.read
+              ? { ...msg, read: true }
+              : msg
+          )
+        );
+        
+        // Update conversations
+        const globalUserStore = (window as any).__userStore;
+        if (globalUserStore) {
+          const localUserId = globalUserStore.localUser()?.id;
+          const peers = globalUserStore.peers();
+          if (localUserId) {
+            updateConversations(messages(), { localUserId, peers });
+          }
+        }
+      });
+      
+      // Store cleanup functions
+      (window as any).__chatStoreCleanup = () => {
+        unlistenMessageSent();
+        unlistenMessageReceived();
+        unlistenMessagesRead();
+      };
     };
     
-    const stopRefreshInterval = () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-    };
-    
-    // Start the interval
-    startRefreshInterval();
+    // Setup event listeners
+    setupEventListeners().catch(err => {
+      console.error('Failed to setup chat event listeners:', err);
+    });
     
     // Clean up on window unload
-    window.addEventListener('beforeunload', stopRefreshInterval);
-    
-    // Export cleanup function for external use
-    (window as any).__chatStoreCleanup = stopRefreshInterval;
+    window.addEventListener('beforeunload', () => {
+      if ((window as any).__chatStoreCleanup) {
+        (window as any).__chatStoreCleanup();
+      }
+    });
     
     
   } catch (err) {

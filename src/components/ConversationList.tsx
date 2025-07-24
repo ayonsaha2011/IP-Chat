@@ -5,7 +5,6 @@ import {
   HStack,
   Text,
   Avatar,
-  Divider,
   Badge,
   Center,
 } from "@hope-ui/solid";

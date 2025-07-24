@@ -8,7 +8,7 @@ fn main() {
         .init();
 
     println!("Starting IP Chat application...");
-    
+
     // Run the application
     ip_chat_lib::run()
 }

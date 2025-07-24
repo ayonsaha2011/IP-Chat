@@ -1,4 +1,4 @@
-import { Component, createSignal, createEffect, For, Show, onCleanup } from "solid-js";
+import { Component, createSignal, createEffect, For, Show } from "solid-js";
 import {
   Box,
   VStack,
@@ -41,30 +41,8 @@ const ChatPanel: Component = () => {
     }
   });
   
-  // Set up periodic refresh with proper cleanup
-  let intervalId: NodeJS.Timeout | null = null;
-  
-  // Only start refresh when there's an active conversation
-  createEffect(() => {
-    const active = activeConversation();
-    
-    if (active && !intervalId) {
-      intervalId = setInterval(() => {
-        chatStore.refreshMessages();
-      }, 2000);
-    } else if (!active && intervalId) {
-      clearInterval(intervalId);
-      intervalId = null;
-    }
-  });
-  
-  // Clean up on unmount
-  onCleanup(() => {
-    if (intervalId) {
-      clearInterval(intervalId);
-      intervalId = null;
-    }
-  });
+  // No need for periodic refresh - using real-time events from backend
+  // Messages are automatically updated via event listeners in chatStore
   
   // Send message
   const handleSendMessage = async () => {
@@ -77,10 +55,7 @@ const ChatPanel: Component = () => {
       await chatStore.sendMessage(currentPeer.id, content);
       setMessage("");
       
-      // Force a refresh of messages to ensure UI is updated
-      setTimeout(() => {
-        chatStore.refreshMessages();
-      }, 100);
+      // No need to force refresh - real-time events will update the UI
     } catch (err) {
       console.error("Failed to send message:", err instanceof Error ? err.message : String(err));
     }
