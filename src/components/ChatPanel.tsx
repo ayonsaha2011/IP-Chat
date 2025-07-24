@@ -22,16 +22,8 @@ const ChatPanel: Component = () => {
   const [scrollRef, setScrollRef] = createSignal<HTMLDivElement | null>(null);
   
   // Get active conversation
-  const activeConversation = () => {
-    const conv = chatStore.getActiveConversation();
-    console.log("ChatPanel: getActiveConversation called, result:", conv ? `${conv.peer.name} (${conv.messages.length} messages)` : "(none)");
-    return conv;
-  };
-  const peer = () => {
-    const p = activeConversation()?.peer;
-    console.log("ChatPanel: peer() called, result:", p ? `${p.name} (${p.id})` : "(none)");
-    return p;
-  };
+  const activeConversation = () => chatStore.getActiveConversation();
+  const peer = () => activeConversation()?.peer;
   
   // Scroll to bottom when new messages arrive
   createEffect(() => {
@@ -63,12 +55,6 @@ const ChatPanel: Component = () => {
   const handleSendMessage = async () => {
     const content = message().trim();
     const currentPeer = peer();
-    const activeId = chatStore.activeConversationId();
-    
-    console.log("ChatPanel: handleSendMessage called");
-    console.log("ChatPanel: Content:", content ? `"${content}"` : "(empty)");
-    console.log("ChatPanel: Current peer:", currentPeer ? `${currentPeer.name} (${currentPeer.id})` : "(none)");
-    console.log("ChatPanel: Active conversation ID:", activeId);
     
     if (!content) {
       console.log("ChatPanel: Cannot send - no content");
@@ -77,12 +63,10 @@ const ChatPanel: Component = () => {
     
     if (!currentPeer) {
       console.log("ChatPanel: Cannot send - no peer selected");
-      console.log("ChatPanel: Available conversations:", chatStore.conversations().length);
-      console.log("ChatPanel: Active conversation:", chatStore.getActiveConversation());
       return;
     }
     
-    console.log(`ChatPanel: Sending message to ${currentPeer.name} (${currentPeer.id})`);
+    console.log(`ChatPanel: Sending message to ${currentPeer.name}`);
     
     try {
       await chatStore.sendMessage(currentPeer.id, content);

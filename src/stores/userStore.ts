@@ -140,7 +140,6 @@ async function stopDiscovery() {
 // Refresh the list of peers
 async function refreshPeers() {
   try {
-    console.log('UserStore: Refreshing peers...');
     const discoveredPeers = await Promise.race([
       invoke<User[]>('get_discovered_peers'),
       new Promise<never>((_, reject) => 
@@ -148,16 +147,14 @@ async function refreshPeers() {
       )
     ]);
     
-    console.log(`UserStore: Received ${discoveredPeers.length} peers from backend:`);
-    discoveredPeers.forEach((peer, idx) => {
-      console.log(`  ${idx + 1}. ${peer.name} (${peer.id}) at ${peer.ip}`);
-    });
-    
     const currentPeerCount = peers().length;
     setPeers(discoveredPeers);
     
     if (currentPeerCount !== discoveredPeers.length) {
-      console.log(`UserStore: Peer count changed from ${currentPeerCount} to ${discoveredPeers.length}`);
+      console.log(`UserStore: Peers updated: ${currentPeerCount} → ${discoveredPeers.length}`);
+      if (discoveredPeers.length > 0) {
+        console.log('UserStore: Available peers:', discoveredPeers.map(p => `${p.name} (${p.id})`));
+      }
     }
   } catch (err) {
     console.error('UserStore: Failed to refresh peers:', err instanceof Error ? err.message : String(err));

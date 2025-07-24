@@ -133,7 +133,6 @@ export function createConversations(
 
   // Group messages by peer ID
   const conversationMap = new Map<string, Conversation>();
-  let placeholderCount = 0;
 
   messages.forEach((message) => {
     // Determine the peer ID (the other party in the conversation)
@@ -150,7 +149,6 @@ export function createConversations(
           ip: 'Unknown',
           lastSeen: new Date().toISOString()
         };
-        placeholderCount++;
         
         conversationMap.set(peerId, {
           peer: placeholderPeer,
@@ -188,10 +186,6 @@ export function createConversations(
       if (!b.lastMessage) return -1;
       return new Date(b.lastMessage.timestamp).getTime() - new Date(a.lastMessage.timestamp).getTime();
     });
-
-  if (placeholderCount > 0) {
-    console.log(`Utils: Created ${conversations.length} conversations (${placeholderCount} with unknown peers)`);
-  }
 
   return conversations;
 }

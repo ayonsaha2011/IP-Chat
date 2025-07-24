@@ -151,24 +151,14 @@ async function markMessagesAsRead(peerId: string) {
 
 // Get a conversation by peer ID
 function getConversationByPeerId(peerId: string): Conversation | undefined {
-  const convs = conversations();
-  const found = convs.find(conv => conv.peer.id === peerId);
-  console.log(`Chat store: getConversationByPeerId(${peerId}) - Found: ${found ? `${found.peer.name} with ${found.messages.length} messages` : 'none'}`);
-  console.log(`Chat store: Total conversations available: ${convs.length}`);
-  return found;
+  return conversations().find(conv => conv.peer.id === peerId);
 }
 
 // Get the active conversation
 function getActiveConversation(): Conversation | undefined {
   const activeId = activeConversationId();
-  console.log(`Chat store: getActiveConversation() - Active ID: ${activeId}`);
-  if (!activeId) {
-    console.log('Chat store: No active conversation ID set');
-    return undefined;
-  }
-  const conv = getConversationByPeerId(activeId);
-  console.log(`Chat store: Active conversation: ${conv ? `${conv.peer.name} (${conv.peer.id})` : 'not found'}`);
-  return conv;
+  if (!activeId) return undefined;
+  return getConversationByPeerId(activeId);
 }
 
 // Export the chat store
