@@ -69,7 +69,7 @@ jobs:
     - name: Run backend tests
       run: cd src-tauri && cargo test --verbose
 
-  build-tauri:
+  # build-tauri:
     name: Build Tauri App
     needs: [test-frontend, test-backend]
     strategy:

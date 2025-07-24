@@ -13,6 +13,8 @@ use crate::models::User;
 const SERVICE_TYPE: &str = "_ip-chat._tcp.local.";
 const SERVICE_PORT: u16 = 8765;
 const DISCOVERY_INTERVAL: u64 = 30; // seconds
+const PEER_TIMEOUT: i64 = 600; // 10 minutes to be more tolerant
+const MAX_DISCOVERY_RETRIES: u8 = 3;
 
 /// Handles network discovery using mDNS
 pub struct NetworkDiscovery {
@@ -95,6 +97,35 @@ impl NetworkDiscovery {
         }
     }
 
+    /// Creates mDNS daemon with retry logic
+    async fn create_mdns_daemon_with_retry(&self) -> AppResult<ServiceDaemon> {
+        let mut last_error = None;
+        
+        for attempt in 1..=MAX_DISCOVERY_RETRIES {
+            match ServiceDaemon::new() {
+                Ok(daemon) => {
+                    info!("Successfully created mDNS daemon on attempt {}", attempt);
+                    return Ok(daemon);
+                }
+                Err(e) => {
+                    warn!("Failed to create mDNS daemon on attempt {}: {}", attempt, e);
+                    last_error = Some(e);
+                    
+                    if attempt < MAX_DISCOVERY_RETRIES {
+                        // Wait before retrying
+                        tokio::time::sleep(Duration::from_millis(1000 * attempt as u64)).await;
+                    }
+                }
+            }
+        }
+        
+        Err(AppError::MdnsError(format!(
+            "Failed to create mDNS daemon after {} attempts: {}",
+            MAX_DISCOVERY_RETRIES,
+            last_error.unwrap()
+        )))
+    }
+
     /// Starts the network discovery service
     pub async fn start_discovery(&mut self) -> AppResult<()> {
         // Check if discovery is already running
@@ -107,9 +138,8 @@ impl NetworkDiscovery {
             }
         }
 
-        // Create mDNS daemon
-        let daemon = ServiceDaemon::new()
-            .map_err(|e| AppError::MdnsError(format!("Failed to create mDNS daemon: {e}")))?;
+        // Try to create mDNS daemon with retries
+        let daemon = self.create_mdns_daemon_with_retry().await?;
 
         // Register our service
         let user_json =
@@ -249,11 +279,21 @@ impl NetworkDiscovery {
                                                     // Update user IP from service info
                                                     user.ip = info.get_addresses().iter().next().map(|addr| addr.to_string()).unwrap_or(user.ip);
                                                     user.last_seen = chrono::Utc::now();
-                                                    info!("Discovered peer: {} at {}", user.name, user.ip);
-                                                    let mut peers_map = peers.lock().unwrap();
-                                                    peers_map.insert(user.id.clone(), user.clone());
+                                                    
+                                                    let is_new_peer = {
+                                                        let peers_map = peers.lock().unwrap();
+                                                        !peers_map.contains_key(&user.id)
+                                                    };
+                                                    
+                                                    info!("Discovered peer: {} at {} ({})", user.name, user.ip, 
+                                                          if is_new_peer { "new" } else { "updated" });
+                                                    
+                                                    {
+                                                        let mut peers_map = peers.lock().unwrap();
+                                                        peers_map.insert(user.id.clone(), user.clone());
+                                                    }
 
-                                                    // Emit peer discovered event
+                                                    // Emit peer discovered event (for both new and updated peers)
                                                     emit_event("peer_discovered", user);
                                                 }
                                             }
@@ -299,8 +339,8 @@ impl NetworkDiscovery {
                         let mut peers_map = peers.lock().unwrap();
                         let before_count = peers_map.len();
                         peers_map.retain(|_, user| {
-                            // Remove peers that haven't been seen in 2 minutes
-                            now.signed_duration_since(user.last_seen).num_seconds() < 120
+                            // Remove peers that haven't been seen in 5 minutes (increased from 2)
+                            now.signed_duration_since(user.last_seen).num_seconds() < PEER_TIMEOUT
                         });
                         let after_count = peers_map.len();
                         if before_count != after_count {
@@ -412,6 +452,31 @@ impl NetworkDiscovery {
     pub fn get_discovered_peers(&self) -> Vec<User> {
         let peers = self.peers.lock().unwrap();
         peers.values().cloned().collect()
+    }
+
+    /// Gets a specific peer by ID, returns None if not found
+    pub fn get_peer_by_id(&self, peer_id: &str) -> Option<User> {
+        let peers = self.peers.lock().unwrap();
+        peers.get(peer_id).cloned()
+    }
+
+    /// Forces a refresh of mDNS discovery to find peers
+    pub async fn refresh_peer_discovery(&self) -> AppResult<()> {
+        if let Some(daemon) = &self.daemon {
+            // Stop and restart search to refresh discovery
+            let _ = daemon.stop_browse(SERVICE_TYPE);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            
+            let event_rx = daemon
+                .browse(SERVICE_TYPE)
+                .map_err(|e| AppError::MdnsError(format!("Failed to restart discovery: {e}")))?;
+            
+            // The event_rx is consumed by the background task, so we don't need to handle it here
+            drop(event_rx);
+            
+            info!("Refreshed mDNS peer discovery");
+        }
+        Ok(())
     }
 
     /// Broadcasts an update to the local user info
