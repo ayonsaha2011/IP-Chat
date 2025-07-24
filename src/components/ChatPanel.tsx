@@ -1,4 +1,4 @@
-import { Component, createSignal, createEffect, For, Show, onCleanup } from "solid-js";
+import { Component, createSignal, createEffect, For, Show } from "solid-js";
 import {
   Box,
   VStack,
@@ -14,7 +14,8 @@ import {
 } from "@hope-ui/solid";
 import { FiSend, FiPaperclip, FiArrowLeft } from "solid-icons/fi";
 import { userStore, chatStore, fileTransferStore } from "../stores";
-import { formatRelativeTime, getInitials, stringToColor } from "../utils";
+import { formatRelativeTime, getInitials, stringToColor, formatFileSize, getStatusColor } from "../utils";
+import { TransferStatus } from "../types";
 
 const ChatPanel: Component = () => {
   // Local state
@@ -25,10 +26,10 @@ const ChatPanel: Component = () => {
   const activeConversation = () => chatStore.getActiveConversation();
   const peer = () => activeConversation()?.peer;
   
-  // Scroll to bottom when new messages arrive
+  // Scroll to bottom when new items arrive
   createEffect(() => {
     const scrollElement = scrollRef();
-    if (scrollElement && activeConversation()?.messages) {
+    if (scrollElement && activeConversation()?.items) {
       scrollElement.scrollTop = scrollElement.scrollHeight;
     }
   });
@@ -41,49 +42,23 @@ const ChatPanel: Component = () => {
     }
   });
   
-  // Set up periodic refresh
-  const intervalId = setInterval(() => {
-    chatStore.refreshMessages();
-  }, 2000);
-  
-  // Clean up on unmount
-  onCleanup(() => {
-    clearInterval(intervalId);
-  });
+  // No need for periodic refresh - using real-time events from backend
+  // Messages are automatically updated via event listeners in chatStore
   
   // Send message
   const handleSendMessage = async () => {
     const content = message().trim();
     const currentPeer = peer();
     
-    if (!content) {
-      console.log("ChatPanel: Cannot send - no content");
-      return;
-    }
-    
-    if (!currentPeer) {
-      console.log("ChatPanel: Cannot send - no peer selected");
-      return;
-    }
-    
-    console.log(`ChatPanel: Sending message to ${currentPeer.name}`);
+    if (!content || !currentPeer) return;
     
     try {
       await chatStore.sendMessage(currentPeer.id, content);
-      console.log("ChatPanel: Message sent successfully");
       setMessage("");
       
-      // Force a refresh of messages to ensure UI is updated
-      setTimeout(() => {
-        chatStore.refreshMessages();
-      }, 100);
+      // No need to force refresh - real-time events will update the UI
     } catch (err) {
-      console.error("ChatPanel: Failed to send message:", err instanceof Error ? err.message : String(err));
-      
-      // Show user-friendly error message
-      if (err instanceof Error && err.message.includes("Peer not found")) {
-        console.warn("ChatPanel: Peer not discovered - ensure peer is online and discoverable");
-      }
+      console.error("Failed to send message:", err instanceof Error ? err.message : String(err));
     }
   };
   
@@ -145,18 +120,18 @@ const ChatPanel: Component = () => {
         p="$4"
         ref={setScrollRef}
       >
-        <VStack spacing="$4" pb="$4">
+        <VStack spacing="$4" pb="$4" alignItems="stretch">
           <Show
-            when={activeConversation()?.messages.length}
+            when={activeConversation()?.items.length}
             fallback={
               <Box p="$4" textAlign="center">
                 <Text>No messages yet. Say hello!</Text>
               </Box>
             }
           >
-            <For each={activeConversation()?.messages}>
-              {(msg) => {
-                const isFromMe = msg.senderId === userStore.localUser()?.id;
+            <For each={activeConversation()?.items}>
+              {(item) => {
+                const isFromMe = item.senderId === userStore.localUser()?.id;
                 
                 return (
                   <HStack
@@ -180,12 +155,48 @@ const ChatPanel: Component = () => {
                       borderRadius="$lg"
                     >
                       <VStack spacing="$1">
-                        <Text>{msg.content}</Text>
+                        <Show when={item.type === 'message'}>
+                          <Text>{item.content}</Text>
+                        </Show>
+                        
+                        <Show when={item.type === 'file'}>
+                          <VStack spacing="$2" alignItems="start">
+                            <HStack spacing="$2" alignItems="center">
+                              <Text fontSize="$lg">📁</Text>
+                              <VStack spacing="$0" alignItems="start">
+                                <Text fontWeight="bold">{item.fileName}</Text>
+                                <Text fontSize="$xs" opacity="0.8">
+                                  {formatFileSize(item.fileSize || 0)}
+                                </Text>
+                              </VStack>
+                            </HStack>
+                            
+                            <Show when={item.status}>
+                              <Text 
+                                fontSize="$xs" 
+                                color={getStatusColor(item.status as TransferStatus)}
+                                fontWeight="bold"
+                              >
+                                Status: {item.status}
+                                <Show when={item.status === TransferStatus.InProgress && item.bytesTransferred && item.fileSize}>
+                                  {` (${Math.round((item.bytesTransferred / item.fileSize) * 100)}%)`}
+                                </Show>
+                              </Text>
+                            </Show>
+                            
+                            <Show when={item.error}>
+                              <Text fontSize="$xs" color="red">
+                                Error: {item.error}
+                              </Text>
+                            </Show>
+                          </VStack>
+                        </Show>
+                        
                         <Text fontSize="$xs" opacity="0.8">
-                          {formatRelativeTime(msg.timestamp)}
-                          {isFromMe && (
+                          {formatRelativeTime(item.timestamp)}
+                          {isFromMe && item.type === 'message' && (
                             <Show
-                              when={msg.read}
+                              when={item.read}
                               fallback={<Box as="span" ml="$1">✓</Box>}
                             >
                               <Box as="span" ml="$1">✓✓</Box>

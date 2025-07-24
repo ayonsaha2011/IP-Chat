@@ -2,11 +2,11 @@ use log::{debug, error, info};
 use std::collections::HashMap;
 use std::fs::{metadata, File};
 use std::io::{Read, Write};
-use std::net::{SocketAddr, TcpListener, TcpStream};
+use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
-use tokio::io::{AsyncReadExt, AsyncWriteExt, AsyncBufReadExt};
-use tokio::net::TcpStream as AsyncTcpStream;
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener as AsyncTcpListener, TcpStream as AsyncTcpStream};
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -24,10 +24,10 @@ pub struct FileTransferManager {
     transfers: Arc<Mutex<HashMap<String, FileTransfer>>>,
     /// Map of connections by peer ID
     #[allow(dead_code)]
-    connections: Arc<Mutex<HashMap<String, TcpStream>>>,
+    connections: Arc<Mutex<HashMap<String, AsyncTcpStream>>>,
     /// Listener for incoming connections
     #[allow(dead_code)]
-    listener: Option<TcpListener>,
+    listener: Option<AsyncTcpListener>,
     /// Channel for stopping the file transfer service
     #[allow(dead_code)]
     stop_tx: Option<mpsc::Sender<()>>,
@@ -47,15 +47,13 @@ impl FileTransferManager {
 
     /// Starts the file transfer service
     #[allow(dead_code)]
-    pub fn start_file_transfer_service(&mut self) -> AppResult<()> {
-        // Bind to the file transfer port
-        let listener = TcpListener::bind(format!("0.0.0.0:{FILE_TRANSFER_PORT}")).map_err(|e| {
-            AppError::NetworkError(format!("Failed to bind to port {FILE_TRANSFER_PORT}: {e}"))
-        })?;
-
-        listener
-            .set_nonblocking(true)
-            .map_err(|e| AppError::NetworkError(format!("Failed to set non-blocking mode: {e}")))?;
+    pub async fn start_file_transfer_service(&mut self) -> AppResult<()> {
+        // Bind to the file transfer port using async listener
+        let listener = AsyncTcpListener::bind(format!("0.0.0.0:{FILE_TRANSFER_PORT}"))
+            .await
+            .map_err(|e| {
+                AppError::NetworkError(format!("Failed to bind to port {FILE_TRANSFER_PORT}: {e}"))
+            })?;
 
         // Set up channel for stopping the service
         let (stop_tx, mut stop_rx) = mpsc::channel::<()>(1);
@@ -65,20 +63,13 @@ impl FileTransferManager {
         self.stop_tx = Some(stop_tx);
 
         // Clone necessary values for the task
-        let listener = self
-            .listener
-            .as_ref()
-            .unwrap()
-            .try_clone()
-            .map_err(|e| AppError::NetworkError(format!("Failed to clone listener: {e}")))?;
+        let listener = self.listener.take().unwrap();
         let transfers = Arc::clone(&self.transfers);
         let connections = Arc::clone(&self.connections);
         let local_user = self.local_user.clone();
 
         // Spawn task to handle incoming connections
         tokio::spawn(async move {
-            let listener = listener;
-
             loop {
                 // Check for stop signal
                 if stop_rx.try_recv().is_ok() {
@@ -87,7 +78,7 @@ impl FileTransferManager {
                 }
 
                 // Accept incoming connections
-                match listener.accept() {
+                match listener.accept().await {
                     Ok((stream, addr)) => {
                         debug!("New file transfer connection from: {addr}");
 
@@ -110,10 +101,6 @@ impl FileTransferManager {
                                 error!("Error handling file transfer connection: {e}");
                             }
                         });
-                    }
-                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                        // No incoming connections, sleep a bit
-                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
                     }
                     Err(e) => {
                         error!("Error accepting file transfer connection: {e}");
@@ -235,10 +222,9 @@ impl FileTransferManager {
             .await
             .map_err(|e| AppError::NetworkError(format!("Failed to send transfer request: {e}")))?;
 
-        stream
-            .flush()
-            .await
-            .map_err(|e| AppError::NetworkError(format!("Failed to flush transfer request: {e}")))?;
+        stream.flush().await.map_err(|e| {
+            AppError::NetworkError(format!("Failed to flush transfer request: {e}"))
+        })?;
 
         Ok(())
     }
@@ -546,16 +532,12 @@ async fn receive_file_data(
 /// Handles an incoming file transfer connection
 #[allow(dead_code)]
 async fn handle_file_connection(
-    stream: TcpStream,
+    stream: AsyncTcpStream,
     _addr: SocketAddr,
     transfers: Arc<Mutex<HashMap<String, FileTransfer>>>,
-    _connections: Arc<Mutex<HashMap<String, TcpStream>>>,
+    _connections: Arc<Mutex<HashMap<String, AsyncTcpStream>>>,
     local_user: User,
 ) -> AppResult<()> {
-    // Convert to async stream
-    let stream = AsyncTcpStream::from_std(stream)
-        .map_err(|e| AppError::NetworkError(format!("Failed to convert stream: {e}")))?;
-
     // Read the first line to determine the type of request
     let mut line = String::new();
     let mut reader = tokio::io::BufReader::new(stream);
@@ -569,7 +551,7 @@ async fn handle_file_connection(
     if line.starts_with("FILE_DATA:") {
         // This is a file data transfer
         let transfer_id = line.strip_prefix("FILE_DATA:").unwrap();
-        
+
         // Get the transfer
         let transfer = {
             let transfers = transfers.lock().unwrap();
@@ -582,20 +564,18 @@ async fn handle_file_connection(
         // We are the recipient, receive the file data
         if transfer.recipient_id == local_user.id {
             // Read the rest of the data and write to file
-            let dest_path = transfer
-                .destination_path
-                .as_ref()
-                .ok_or_else(|| AppError::FileTransferError("Destination path not specified".to_string()))?;
+            let dest_path = transfer.destination_path.as_ref().ok_or_else(|| {
+                AppError::FileTransferError("Destination path not specified".to_string())
+            })?;
 
             let mut file = File::create(dest_path).map_err(AppError::IoError)?;
             let mut buffer = vec![0; CHUNK_SIZE];
             let mut bytes_received = 0;
 
             loop {
-                let bytes_read = reader
-                    .read(&mut buffer)
-                    .await
-                    .map_err(|e| AppError::NetworkError(format!("Failed to receive file chunk: {e}")))?;
+                let bytes_read = reader.read(&mut buffer).await.map_err(|e| {
+                    AppError::NetworkError(format!("Failed to receive file chunk: {e}"))
+                })?;
 
                 if bytes_read == 0 {
                     break;
@@ -623,7 +603,7 @@ async fn handle_file_connection(
     } else if line.starts_with("REQUEST_FILE:") {
         // This is a request for file data
         let transfer_id = line.strip_prefix("REQUEST_FILE:").unwrap();
-        
+
         // Get the transfer
         let transfer = {
             let transfers = transfers.lock().unwrap();
@@ -635,10 +615,9 @@ async fn handle_file_connection(
 
         // We are the sender, send the file data
         if transfer.sender_id == local_user.id {
-            let source_path = transfer
-                .source_path
-                .as_ref()
-                .ok_or_else(|| AppError::FileTransferError("Source path not specified".to_string()))?;
+            let source_path = transfer.source_path.as_ref().ok_or_else(|| {
+                AppError::FileTransferError("Source path not specified".to_string())
+            })?;
 
             let mut file = File::open(source_path).map_err(AppError::IoError)?;
             let mut buffer = vec![0; CHUNK_SIZE];
@@ -654,10 +633,9 @@ async fn handle_file_connection(
                     break;
                 }
 
-                stream
-                    .write_all(&buffer[..bytes_read])
-                    .await
-                    .map_err(|e| AppError::NetworkError(format!("Failed to send file chunk: {e}")))?;
+                stream.write_all(&buffer[..bytes_read]).await.map_err(|e| {
+                    AppError::NetworkError(format!("Failed to send file chunk: {e}"))
+                })?;
 
                 bytes_sent += bytes_read as u64;
 
@@ -688,10 +666,13 @@ async fn handle_file_connection(
         full_buffer.extend(buffer);
 
         // Parse the transfer request
-        let transfer: FileTransfer = serde_json::from_slice(&full_buffer)
-            .map_err(AppError::SerializationError)?;
+        let transfer: FileTransfer =
+            serde_json::from_slice(&full_buffer).map_err(AppError::SerializationError)?;
 
-        info!("Received file transfer request: {} from {}", transfer.file_name, transfer.sender_id);
+        info!(
+            "Received file transfer request: {} from {}",
+            transfer.file_name, transfer.sender_id
+        );
 
         // Store the transfer if we are the recipient
         if transfer.recipient_id == local_user.id {

@@ -6,12 +6,15 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
+use crate::emit_event;
 use crate::error::{AppError, AppResult};
 use crate::models::User;
 
 const SERVICE_TYPE: &str = "_ip-chat._tcp.local.";
 const SERVICE_PORT: u16 = 8765;
 const DISCOVERY_INTERVAL: u64 = 30; // seconds
+const PEER_TIMEOUT: i64 = 600; // 10 minutes to be more tolerant
+const MAX_DISCOVERY_RETRIES: u8 = 3;
 
 /// Handles network discovery using mDNS
 pub struct NetworkDiscovery {
@@ -33,8 +36,11 @@ pub struct NetworkDiscovery {
 
 impl Drop for NetworkDiscovery {
     fn drop(&mut self) {
-        debug!("NetworkDiscovery::drop called for service: {}", self.service_name);
-        
+        debug!(
+            "NetworkDiscovery::drop called for service: {}",
+            self.service_name
+        );
+
         // Set running flag to false to stop background threads
         if let Ok(mut is_running) = self.is_running.lock() {
             *is_running = false;
@@ -45,19 +51,31 @@ impl Drop for NetworkDiscovery {
         if let Ok(service_registered) = self.service_registered.lock() {
             if *service_registered {
                 if let Some(daemon) = &self.daemon {
-                    debug!("Attempting to unregister service in drop: {}", self.service_name);
+                    debug!(
+                        "Attempting to unregister service in drop: {}",
+                        self.service_name
+                    );
                     // Ignore errors during drop - best effort cleanup
                     match daemon.unregister(&self.service_name) {
-                        Ok(_) => debug!("Successfully unregistered service in drop: {}", self.service_name),
-                        Err(e) => debug!("Could not unregister service in drop (this is normal): {}", e),
+                        Ok(_) => debug!(
+                            "Successfully unregistered service in drop: {}",
+                            self.service_name
+                        ),
+                        Err(e) => debug!(
+                            "Could not unregister service in drop (this is normal): {}",
+                            e
+                        ),
                     }
                 }
             } else {
                 debug!("Service was not registered, skipping unregistration in drop");
             }
         }
-        
-        debug!("NetworkDiscovery::drop completed for service: {}", self.service_name);
+
+        debug!(
+            "NetworkDiscovery::drop completed for service: {}",
+            self.service_name
+        );
     }
 }
 
@@ -79,6 +97,35 @@ impl NetworkDiscovery {
         }
     }
 
+    /// Creates mDNS daemon with retry logic
+    async fn create_mdns_daemon_with_retry(&self) -> AppResult<ServiceDaemon> {
+        let mut last_error = None;
+        
+        for attempt in 1..=MAX_DISCOVERY_RETRIES {
+            match ServiceDaemon::new() {
+                Ok(daemon) => {
+                    info!("Successfully created mDNS daemon on attempt {}", attempt);
+                    return Ok(daemon);
+                }
+                Err(e) => {
+                    warn!("Failed to create mDNS daemon on attempt {}: {}", attempt, e);
+                    last_error = Some(e);
+                    
+                    if attempt < MAX_DISCOVERY_RETRIES {
+                        // Wait before retrying
+                        tokio::time::sleep(Duration::from_millis(1000 * attempt as u64)).await;
+                    }
+                }
+            }
+        }
+        
+        Err(AppError::MdnsError(format!(
+            "Failed to create mDNS daemon after {} attempts: {}",
+            MAX_DISCOVERY_RETRIES,
+            last_error.unwrap()
+        )))
+    }
+
     /// Starts the network discovery service
     pub async fn start_discovery(&mut self) -> AppResult<()> {
         // Check if discovery is already running
@@ -91,9 +138,8 @@ impl NetworkDiscovery {
             }
         }
 
-        // Create mDNS daemon
-        let daemon = ServiceDaemon::new()
-            .map_err(|e| AppError::MdnsError(format!("Failed to create mDNS daemon: {e}")))?;
+        // Try to create mDNS daemon with retries
+        let daemon = self.create_mdns_daemon_with_retry().await?;
 
         // Register our service
         let user_json =
@@ -115,14 +161,22 @@ impl NetworkDiscovery {
 
         match daemon.register(service_info) {
             Ok(_) => {
-                info!("Successfully registered mDNS service: {}", self.service_name);
+                info!(
+                    "Successfully registered mDNS service: {}",
+                    self.service_name
+                );
                 // Mark service as registered
                 let mut service_registered = self.service_registered.lock().unwrap();
                 *service_registered = true;
             }
             Err(e) => {
-                error!("Failed to register mDNS service {}: {}", self.service_name, e);
-                return Err(AppError::MdnsError(format!("Failed to register service: {e}")));
+                error!(
+                    "Failed to register mDNS service {}: {}",
+                    self.service_name, e
+                );
+                return Err(AppError::MdnsError(format!(
+                    "Failed to register service: {e}"
+                )));
             }
         }
 
@@ -142,8 +196,11 @@ impl NetworkDiscovery {
         let is_running_clone = Arc::clone(&self.is_running);
         let service_name_clone = self.service_name.clone();
         std::thread::spawn(move || {
-            debug!("Starting mDNS receiver thread for service: {}", service_name_clone);
-            
+            debug!(
+                "Starting mDNS receiver thread for service: {}",
+                service_name_clone
+            );
+
             loop {
                 // Check if we should stop
                 {
@@ -172,7 +229,10 @@ impl NetworkDiscovery {
                     }
                 }
             }
-            debug!("mDNS receiver thread exiting for service: {}", service_name_clone);
+            debug!(
+                "mDNS receiver thread exiting for service: {}",
+                service_name_clone
+            );
         });
 
         // Set running flag
@@ -219,9 +279,22 @@ impl NetworkDiscovery {
                                                     // Update user IP from service info
                                                     user.ip = info.get_addresses().iter().next().map(|addr| addr.to_string()).unwrap_or(user.ip);
                                                     user.last_seen = chrono::Utc::now();
-                                                    info!("Discovered peer: {} at {}", user.name, user.ip);
-                                                    let mut peers_map = peers.lock().unwrap();
-                                                    peers_map.insert(user.id.clone(), user);
+                                                    
+                                                    let is_new_peer = {
+                                                        let peers_map = peers.lock().unwrap();
+                                                        !peers_map.contains_key(&user.id)
+                                                    };
+                                                    
+                                                    info!("Discovered peer: {} at {} ({})", user.name, user.ip, 
+                                                          if is_new_peer { "new" } else { "updated" });
+                                                    
+                                                    {
+                                                        let mut peers_map = peers.lock().unwrap();
+                                                        peers_map.insert(user.id.clone(), user.clone());
+                                                    }
+
+                                                    // Emit peer discovered event (for both new and updated peers)
+                                                    emit_event("peer_discovered", user);
                                                 }
                                             }
                                             Err(e) => {
@@ -243,6 +316,9 @@ impl NetworkDiscovery {
                                 let after_count = peers_map.len();
                                 if before_count != after_count {
                                     info!("Removed {} peer(s) from discovery", before_count - after_count);
+                                    // Emit peers updated event
+                                    let peers_list: Vec<User> = peers_map.values().cloned().collect();
+                                    emit_event("peers_updated", peers_list);
                                 }
                             }
                             ServiceEvent::SearchStarted(service_type) => {
@@ -263,12 +339,15 @@ impl NetworkDiscovery {
                         let mut peers_map = peers.lock().unwrap();
                         let before_count = peers_map.len();
                         peers_map.retain(|_, user| {
-                            // Remove peers that haven't been seen in 2 minutes
-                            now.signed_duration_since(user.last_seen).num_seconds() < 120
+                            // Remove peers that haven't been seen in 5 minutes (increased from 2)
+                            now.signed_duration_since(user.last_seen).num_seconds() < PEER_TIMEOUT
                         });
                         let after_count = peers_map.len();
                         if before_count != after_count {
                             info!("Cleaned up {} stale peer(s)", before_count - after_count);
+                            // Emit peers updated event
+                            let peers_list: Vec<User> = peers_map.values().cloned().collect();
+                            emit_event("peers_updated", peers_list);
                         }
                         info!("Current peer count: {after_count}");
                     }
@@ -289,13 +368,13 @@ impl NetworkDiscovery {
     /// Stops the network discovery service
     pub async fn stop_discovery(&mut self) -> AppResult<()> {
         info!("Attempting to stop network discovery...");
-        
+
         // Check if discovery is running
         let was_running = {
             let is_running = self.is_running.lock().unwrap();
             *is_running
         };
-        
+
         if !was_running {
             info!("Discovery was not running, nothing to stop");
             return Ok(()); // Already stopped, no error
@@ -326,7 +405,7 @@ impl NetworkDiscovery {
                 let service_registered = self.service_registered.lock().unwrap();
                 *service_registered
             };
-            
+
             if should_unregister {
                 info!("Unregistering mDNS service: {}", self.service_name);
                 match daemon.unregister(&self.service_name) {
@@ -338,7 +417,10 @@ impl NetworkDiscovery {
                     }
                     Err(e) => {
                         // Log as warning instead of error - this is common during shutdown
-                        warn!("Could not unregister service {} (this is normal during shutdown): {}", self.service_name, e);
+                        warn!(
+                            "Could not unregister service {} (this is normal during shutdown): {}",
+                            self.service_name, e
+                        );
                         // Still mark as unregistered to avoid double unregistration
                         let mut service_registered = self.service_registered.lock().unwrap();
                         *service_registered = false;
@@ -347,7 +429,7 @@ impl NetworkDiscovery {
             } else {
                 debug!("Service was not registered, skipping unregistration");
             }
-            
+
             // Give the daemon time to clean up
             tokio::time::sleep(Duration::from_millis(150)).await;
         }
@@ -372,6 +454,31 @@ impl NetworkDiscovery {
         peers.values().cloned().collect()
     }
 
+    /// Gets a specific peer by ID, returns None if not found
+    pub fn get_peer_by_id(&self, peer_id: &str) -> Option<User> {
+        let peers = self.peers.lock().unwrap();
+        peers.get(peer_id).cloned()
+    }
+
+    /// Forces a refresh of mDNS discovery to find peers
+    pub async fn refresh_peer_discovery(&self) -> AppResult<()> {
+        if let Some(daemon) = &self.daemon {
+            // Stop and restart search to refresh discovery
+            let _ = daemon.stop_browse(SERVICE_TYPE);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            
+            let event_rx = daemon
+                .browse(SERVICE_TYPE)
+                .map_err(|e| AppError::MdnsError(format!("Failed to restart discovery: {e}")))?;
+            
+            // The event_rx is consumed by the background task, so we don't need to handle it here
+            drop(event_rx);
+            
+            info!("Refreshed mDNS peer discovery");
+        }
+        Ok(())
+    }
+
     /// Broadcasts an update to the local user info
     pub async fn broadcast_user_update(&self) -> AppResult<()> {
         // Check if discovery is running
@@ -394,7 +501,7 @@ impl NetworkDiscovery {
                 let service_registered = self.service_registered.lock().unwrap();
                 *service_registered
             };
-            
+
             if should_unregister {
                 let _ = daemon.unregister(&self.service_name);
             }

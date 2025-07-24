@@ -106,10 +106,7 @@ const PeerList: Component<PeerListProps> = (props) => {
                       <VStack spacing="$2">
                         <Button
                           leftIcon={<Box as={FiMessageCircle} />}
-                          onClick={() => {
-                            console.log(`PeerList: Selecting peer ${peer.name} (${peer.id})`);
-                            props.onSelectPeer(peer.id);
-                          }}
+                          onClick={() => props.onSelectPeer(peer.id)}
                         >
                           Chat
                         </Button>

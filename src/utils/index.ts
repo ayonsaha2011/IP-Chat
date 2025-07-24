@@ -1,6 +1,6 @@
 import { format, formatDistanceToNow } from 'date-fns';
 import { filesize } from 'filesize';
-import { TransferStatus, Message, User, Conversation } from '../types';
+import { TransferStatus, Message, User, Conversation, ConversationItem, FileTransfer } from '../types';
 
 /**
  * Formats a date as a string
@@ -14,7 +14,6 @@ export function formatDate(date: string | Date, formatStr: string = 'PPp'): stri
     
     // Check if the date is valid
     if (isNaN(dateObj.getTime())) {
-      console.warn('Invalid date value:', date);
       return 'Invalid Date';
     }
     
@@ -36,7 +35,6 @@ export function formatRelativeTime(date: string | Date): string {
     
     // Check if the date is valid
     if (isNaN(dateObj.getTime())) {
-      console.warn('Invalid date value:', date);
       return 'Unknown';
     }
     
@@ -116,14 +114,50 @@ export function getStatusText(status: TransferStatus): string {
 }
 
 /**
- * Groups messages by peer to create conversations
+ * Converts a message to a conversation item
+ */
+function messageToConversationItem(message: Message): ConversationItem {
+  return {
+    id: message.id,
+    type: 'message',
+    senderId: message.senderId,
+    recipientId: message.recipientId,
+    timestamp: message.timestamp,
+    read: message.read,
+    content: message.content,
+  };
+}
+
+/**
+ * Converts a file transfer to a conversation item
+ */
+function fileTransferToConversationItem(transfer: FileTransfer): ConversationItem {
+  return {
+    id: transfer.id,
+    type: 'file',
+    senderId: transfer.senderId,
+    recipientId: transfer.recipientId,
+    timestamp: transfer.timestamp,
+    read: transfer.status === TransferStatus.Completed, // Files are considered "read" when completed
+    fileName: transfer.fileName,
+    fileSize: transfer.fileSize,
+    status: transfer.status,
+    bytesTransferred: transfer.bytesTransferred,
+    error: transfer.error,
+  };
+}
+
+/**
+ * Groups messages and file transfers by peer to create conversations
  * @param messages List of messages
+ * @param fileTransfers List of file transfers (optional)
  * @param peers List of peers
  * @param localUserId Local user ID
  * @returns List of conversations
  */
 export function createConversations(
   messages: Message[],
+  fileTransfers: FileTransfer[] = [],
   peers: User[],
   localUserId: string
 ): Conversation[] {
@@ -131,12 +165,21 @@ export function createConversations(
   const peerMap = new Map<string, User>();
   peers.forEach(peer => peerMap.set(peer.id, peer));
 
-  // Group messages by peer ID
+  // Group items by peer ID
   const conversationMap = new Map<string, Conversation>();
 
-  messages.forEach((message) => {
+  // Convert messages to conversation items
+  const messageItems = messages.map(messageToConversationItem);
+  
+  // Convert file transfers to conversation items
+  const fileItems = fileTransfers.map(fileTransferToConversationItem);
+  
+  // Combine all items
+  const allItems = [...messageItems, ...fileItems];
+
+  allItems.forEach((item) => {
     // Determine the peer ID (the other party in the conversation)
-    const peerId = message.senderId === localUserId ? message.recipientId : message.senderId;
+    const peerId = item.senderId === localUserId ? item.recipientId : item.senderId;
     
     // Get or create the conversation
     if (!conversationMap.has(peerId)) {
@@ -152,13 +195,13 @@ export function createConversations(
         
         conversationMap.set(peerId, {
           peer: placeholderPeer,
-          messages: [],
+          items: [],
           unreadCount: 0,
         });
       } else {
         conversationMap.set(peerId, {
           peer,
-          messages: [],
+          items: [],
           unreadCount: 0,
         });
       }
@@ -166,25 +209,30 @@ export function createConversations(
     
     const conversation = conversationMap.get(peerId)!;
     
-    // Add message to conversation
-    conversation.messages.push(message);
+    // Add item to conversation
+    conversation.items.push(item);
     
     // Update unread count
-    if (message.senderId !== localUserId && !message.read) {
+    if (item.senderId !== localUserId && !item.read) {
       conversation.unreadCount++;
     }
     
-    // Update last message
-    if (!conversation.lastMessage || new Date(message.timestamp) > new Date(conversation.lastMessage.timestamp)) {
-      conversation.lastMessage = message;
+    // Update last item
+    if (!conversation.lastItem || new Date(item.timestamp) > new Date(conversation.lastItem.timestamp)) {
+      conversation.lastItem = item;
     }
+  });
+
+  // Sort items within conversations by timestamp
+  conversationMap.forEach(conversation => {
+    conversation.items.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
   });
 
   const conversations = Array.from(conversationMap.values())
     .sort((a, b) => {
-      if (!a.lastMessage) return 1;
-      if (!b.lastMessage) return -1;
-      return new Date(b.lastMessage.timestamp).getTime() - new Date(a.lastMessage.timestamp).getTime();
+      if (!a.lastItem) return 1;
+      if (!b.lastItem) return -1;
+      return new Date(b.lastItem.timestamp).getTime() - new Date(a.lastItem.timestamp).getTime();
     });
 
   return conversations;

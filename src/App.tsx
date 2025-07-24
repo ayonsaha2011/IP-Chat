@@ -29,6 +29,7 @@ import PeerList from "./components/PeerList";
 import FileTransferPanel from "./components/FileTransferPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import WelcomeScreen from "./components/WelcomeScreen";
+import ConversationList from "./components/ConversationList";
 
 function App() {
   const [isInitialized, setIsInitialized] = createSignal(false);
@@ -39,18 +40,14 @@ function App() {
   // Initialize the app
   onMount(async () => {
     try {
-      console.log("App: Starting initialization...");
       await initializeStores();
-      console.log("App: Stores initialized successfully");
       
       // Apply dark mode from settings
       if (settingsStore.settings().darkMode && colorMode() === "light") {
         toggleColorMode();
       }
       
-      console.log("App: Setting initialized to true");
       setIsInitialized(true);
-      console.log("App: Initialization complete - isInitialized:", isInitialized());
       
     } catch (err) {
       console.error("App: Failed to initialize:", err);
@@ -61,15 +58,20 @@ function App() {
   // Cleanup on unmount
   onCleanup(async () => {
     try {
-      console.log("App: Starting cleanup...");
+      // Clean up all store intervals
+      if ((window as any).__chatStoreCleanup) {
+        (window as any).__chatStoreCleanup();
+      }
+      if ((window as any).__fileTransferStoreCleanup) {
+        (window as any).__fileTransferStoreCleanup();
+      }
+      
+      // Clean up user store
       await userStore.cleanup();
-      console.log("App: Cleanup completed");
     } catch (err) {
-      console.log("App: Non-critical error during cleanup:", err);
+      // Ignore cleanup errors
     }
   });
-
-  console.log("App: Rendering - isInitialized =", isInitialized());
 
   return (
     <Show
@@ -132,7 +134,19 @@ function App() {
                 <TabPanel h="100%" p="0">
                   <Show
                     when={chatStore.activeConversationId()}
-                    fallback={<WelcomeScreen onStartChat={() => setActiveTab(1)} />}
+                    fallback={
+                      <Show
+                        when={chatStore.conversations().length > 0}
+                        fallback={<WelcomeScreen onStartChat={() => setActiveTab(1)} />}
+                      >
+                        <ConversationList
+                          onSelectConversation={(peerId) => {
+                            chatStore.setActiveConversationId(peerId);
+                          }}
+                          onStartChat={() => setActiveTab(1)}
+                        />
+                      </Show>
+                    }
                   >
                     <ChatPanel />
                   </Show>
@@ -141,13 +155,9 @@ function App() {
                 {/* Peers Panel */}
                 <TabPanel h="100%" p="$4" overflow="auto">
                   <PeerList onSelectPeer={(peerId) => {
-                    console.log(`App: onSelectPeer called with ${peerId}`);
-                    console.log(`App: Setting active conversation and switching to chat tab`);
-                    
                     // Get the peer data directly
                     const peer = userStore.getPeerById(peerId);
                     if (!peer) {
-                      console.error(`App: Could not find peer with ID:`, peerId);
                       return;
                     }
                     
@@ -156,10 +166,6 @@ function App() {
                     if (conversation) {
                       chatStore.setActiveConversationId(peerId);
                       setActiveTab(0);
-                      console.log(`App: Active conversation ID now:`, chatStore.activeConversationId());
-                      console.log(`App: Conversation created for:`, conversation.peer.name);
-                    } else {
-                      console.error(`App: Failed to create conversation for peer:`, peerId);
                     }
                   }} />
                 </TabPanel>
