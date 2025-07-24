@@ -141,11 +141,7 @@ async fn send_message(
         }
         None => {
             error!("Peer {} not found in discovered peers", peer_id);
-            // Fallback to regular send message (for local testing or cached peers)
-            match state.chat_manager.send_message(&peer_id, &content).await {
-                Ok(message) => Ok(message),
-                Err(e) => Err(format!("Peer not found in discovery and regular send failed: {e}")),
-            }
+            Err(format!("Peer {} not found. Make sure the peer is online and discoverable.", peer_id))
         }
     }
 }
