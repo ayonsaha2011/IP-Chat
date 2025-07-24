@@ -61,14 +61,16 @@ pub struct ConnectionManager {
     connections: Arc<Mutex<HashMap<String, PeerConnection>>>,
     local_user: User,
     heartbeat_tx: Option<mpsc::Sender<()>>,
+    message_storage: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<Message>>>>,
 }
 
 impl ConnectionManager {
-    pub fn new(local_user: User) -> Self {
+    pub fn new(local_user: User, message_storage: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, Vec<Message>>>>) -> Self {
         Self {
             connections: Arc::new(Mutex::new(HashMap::new())),
             local_user,
             heartbeat_tx: None,
+            message_storage,
         }
     }
 
@@ -355,6 +357,18 @@ impl ConnectionManager {
             return Ok(());
         }
 
+        // Store the received message
+        {
+            let mut storage = self.message_storage.lock().unwrap();
+            let peer_messages = storage.entry(message.sender_id.clone()).or_default();
+            peer_messages.push(message.clone());
+            info!(
+                "Stored received message from {}, total messages from peer: {}",
+                message.sender_id,
+                peer_messages.len()
+            );
+        }
+        
         // Emit the message received event
         crate::emit_event("message_received", message);
         Ok(())

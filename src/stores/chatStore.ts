@@ -240,18 +240,8 @@ async function sendMessage(peerId: string, content: string) {
   try {
     const message = await invoke<Message>('send_message', { peerId, content });
     
-    // Update messages
-    setMessages(prev => [...prev, message]);
-    
-    // Update conversations
-    const globalUserStore = (window as any).__userStore;
-    if (globalUserStore) {
-      const localUserId = globalUserStore.localUser()?.id;
-      const peers = globalUserStore.peers();
-      if (localUserId) {
-        updateConversations([...messages(), message], { localUserId, peers });
-      }
-    }
+    // Don't add message here - the backend will emit message_sent event
+    // which will add it to the UI automatically to prevent duplicates
     
     return message;
   } catch (err) {

@@ -429,7 +429,8 @@ pub fn run() {
     // Initialize app state
     let network_discovery = NetworkDiscovery::new(local_user.clone());
     let chat_manager = ChatManager::new(local_user.clone());
-    let connection_manager = ConnectionManager::new(local_user.clone());
+    let message_storage = chat_manager.get_message_storage();
+    let connection_manager = ConnectionManager::new(local_user.clone(), message_storage);
     let file_manager = FileTransferManager::new(local_user.clone());
 
     let app_state = Arc::new(Mutex::new(AppState {

@@ -42,11 +42,16 @@ impl ChatManager {
         }
     }
 
+    /// Gets a reference to the message storage for sharing with ConnectionManager
+    pub fn get_message_storage(&self) -> Arc<Mutex<HashMap<String, Vec<Message>>>> {
+        Arc::clone(&self.messages)
+    }
+
     /// Starts the chat service
     pub fn start_chat_service(&mut self) -> AppResult<()> {
         use tokio::net::TcpListener as AsyncTcpListener;
 
-        let _messages = Arc::clone(&self.messages);
+        let messages = Arc::clone(&self.messages);
         let local_user = self.local_user.clone();
 
         // Spawn async task to handle incoming connections
@@ -70,11 +75,12 @@ impl ChatManager {
 
                         // Clone necessary values for the connection handler
                         let local_user_clone = local_user.clone();
+                        let messages_clone = Arc::clone(&messages);
 
                         // Spawn task to handle the connection using connection manager
                         tokio::spawn(async move {
                             // Create a temporary connection manager for handling this connection
-                            let temp_conn_manager = crate::connection_manager::ConnectionManager::new(local_user_clone);
+                            let temp_conn_manager = crate::connection_manager::ConnectionManager::new(local_user_clone, messages_clone);
                             if let Err(e) = temp_conn_manager.handle_incoming_connection(stream, addr).await {
                                 error!("Error handling incoming connection: {e}");
                             }
@@ -288,6 +294,19 @@ impl ChatManager {
         let sent_messages = messages.entry(self.local_user.id.clone()).or_default();
         sent_messages.push(message.clone());
         info!("Stored sent message locally, total sent messages: {}", sent_messages.len());
+        Ok(())
+    }
+
+    /// Stores a received message locally
+    pub fn store_received_message(&self, message: &Message) -> AppResult<()> {
+        let mut messages = self.messages.lock().unwrap();
+        let peer_messages = messages.entry(message.sender_id.clone()).or_default();
+        peer_messages.push(message.clone());
+        info!(
+            "Stored received message locally from {}, total messages from peer: {}",
+            message.sender_id,
+            peer_messages.len()
+        );
         Ok(())
     }
 
