@@ -30,8 +30,9 @@ import FileTransferPanel from "./components/FileTransferPanel";
 import SettingsPanel from "./components/SettingsPanel";
 import WelcomeScreen from "./components/WelcomeScreen";
 
-// Main app component (extracted for emergency re-render)
+// Main app component 
 function MainApp() {
+  console.log("MainApp: Rendering main application interface");
   const [activeTab, setActiveTab] = createSignal(0);
   const { colorMode, toggleColorMode } = useColorMode();
 
@@ -136,6 +137,11 @@ function App() {
       setIsInitialized(true);
       console.log("App: Initialization complete");
       
+      // Force a small delay to ensure reactive updates
+      setTimeout(() => {
+        console.log("App: Post-initialization check - isInitialized =", isInitialized());
+      }, 100);
+      
     } catch (err) {
       console.error("Failed to initialize app:", err);
       setInitError(`Failed to initialize app: ${err instanceof Error ? err.message : String(err)}`);
@@ -153,9 +159,13 @@ function App() {
     }
   });
 
-  console.log("App: Render - isInitialized =", isInitialized());
+  const initialized = isInitialized();
+  const error = initError();
   
-  if (!isInitialized()) {
+  console.log("App: Render - isInitialized =", initialized, "initError =", error);
+  
+  if (!initialized) {
+    console.log("App: Rendering loading screen");
     return (
       <Center h="100vh" w="100vw">
         <VStack spacing="$4">
@@ -163,12 +173,11 @@ function App() {
           <Spinner thickness="4px" color="$primary9" />
           <Text>Initializing application...</Text>
 
-          
-          <Show when={initError()}>
+          <Show when={error}>
             <Alert status="error" variant="solid">
               <AlertIcon />
               <AlertTitle>Error</AlertTitle>
-              <AlertDescription>{initError()}</AlertDescription>
+              <AlertDescription>{error}</AlertDescription>
             </Alert>
           </Show>
         </VStack>
@@ -176,7 +185,7 @@ function App() {
     );
   }
 
-  // Render main app (this should never execute due to emergency workaround)
+  console.log("App: Rendering main app");
   return <MainApp />;
 }
 
