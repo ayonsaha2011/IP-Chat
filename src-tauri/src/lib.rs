@@ -117,30 +117,43 @@ async fn send_message(
     let mut state = state.lock().await;
     
     info!("Attempting to send message to peer: {}", peer_id);
+    info!("Message content: {}", content);
     
     // Get peer information from discovery service
     let peers = state.discovery.get_discovered_peers();
     info!("Found {} discovered peers", peers.len());
+    
+    // Log all discovered peers for debugging
+    for (i, p) in peers.iter().enumerate() {
+        info!("Peer {}: ID={}, Name={}, IP={}", i + 1, p.id, p.name, p.ip);
+    }
     
     let peer = peers.iter().find(|p| p.id == peer_id);
     
     match peer {
         Some(peer) => {
             info!("Found peer {} at IP: {}", peer_id, peer.ip);
+            info!("Sending message with peer IP: {}", peer.ip);
+            
             // Send message with peer IP
             match state.chat_manager.send_message_with_peer_ip(&peer_id, &content, &peer.ip).await {
                 Ok(message) => {
-                    info!("Message sent successfully");
+                    info!("Message sent successfully - ID: {}, Sender: {}, Recipient: {}", 
+                          message.id, message.sender_id, message.recipient_id);
+                    info!("Message timestamp: {}, Content length: {}", 
+                          message.timestamp, message.content.len());
                     Ok(message)
                 },
                 Err(e) => {
-                    error!("Failed to send message: {}", e);
+                    error!("Failed to send message to peer {}: {}", peer_id, e);
+                    error!("Error details: peer_ip={}, content_len={}", peer.ip, content.len());
                     Err(e.to_string())
                 },
             }
         }
         None => {
             error!("Peer {} not found in discovered peers", peer_id);
+            error!("Available peer IDs: {:?}", peers.iter().map(|p| &p.id).collect::<Vec<_>>());
             Err(format!("Peer {} not found. Make sure the peer is online and discoverable.", peer_id))
         }
     }
@@ -151,11 +164,27 @@ async fn get_messages(
     peer_id: Option<String>,
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<Message>, String> {
-    let state = state.lock().await;
-    match peer_id {
-        Some(id) => Ok(state.chat_manager.get_messages_for_peer(&id)),
-        None => Ok(state.chat_manager.get_all_messages()),
-    }
+    let mut state = state.lock().await;
+    
+    // Ensure services are initialized
+    ensure_services_initialized(&mut state).await;
+    
+    info!("Getting messages for peer_id: {:?}", peer_id);
+    
+    let messages = match peer_id {
+        Some(id) => {
+            let msgs = state.chat_manager.get_messages_for_peer(&id);
+            info!("Retrieved {} messages for peer {}", msgs.len(), id);
+            msgs
+        },
+        None => {
+            let msgs = state.chat_manager.get_all_messages();
+            info!("Retrieved {} total messages", msgs.len());
+            msgs
+        }
+    };
+    
+    Ok(messages)
 }
 
 #[tauri::command]
@@ -164,6 +193,11 @@ async fn mark_messages_as_read(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let mut state = state.lock().await;
+    
+    // Ensure services are initialized
+    ensure_services_initialized(&mut state).await;
+    
+    info!("Marking messages as read for peer: {}", peer_id);
     match state.chat_manager.mark_messages_as_read(&peer_id) {
         Ok(_) => Ok(()),
         Err(e) => Err(e.to_string()),

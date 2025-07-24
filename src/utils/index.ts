@@ -133,21 +133,37 @@ export function createConversations(
 
   // Group messages by peer ID
   const conversationMap = new Map<string, Conversation>();
+  let placeholderCount = 0;
 
-  messages.forEach(message => {
+  messages.forEach((message) => {
     // Determine the peer ID (the other party in the conversation)
     const peerId = message.senderId === localUserId ? message.recipientId : message.senderId;
     
     // Get or create the conversation
     if (!conversationMap.has(peerId)) {
       const peer = peerMap.get(peerId);
-      if (!peer) return; // Skip if peer not found
-      
-      conversationMap.set(peerId, {
-        peer,
-        messages: [],
-        unreadCount: 0,
-      });
+      if (!peer) {
+        // Create a placeholder peer for conversations with unknown peers
+        const placeholderPeer: User = {
+          id: peerId,
+          name: `Unknown User (${peerId.substring(0, 8)})`,
+          ip: 'Unknown',
+          lastSeen: new Date().toISOString()
+        };
+        placeholderCount++;
+        
+        conversationMap.set(peerId, {
+          peer: placeholderPeer,
+          messages: [],
+          unreadCount: 0,
+        });
+      } else {
+        conversationMap.set(peerId, {
+          peer,
+          messages: [],
+          unreadCount: 0,
+        });
+      }
     }
     
     const conversation = conversationMap.get(peerId)!;
@@ -166,13 +182,18 @@ export function createConversations(
     }
   });
 
-  // Sort conversations by last message timestamp (newest first)
-  return Array.from(conversationMap.values())
+  const conversations = Array.from(conversationMap.values())
     .sort((a, b) => {
       if (!a.lastMessage) return 1;
       if (!b.lastMessage) return -1;
       return new Date(b.lastMessage.timestamp).getTime() - new Date(a.lastMessage.timestamp).getTime();
     });
+
+  if (placeholderCount > 0) {
+    console.log(`Utils: Created ${conversations.length} conversations (${placeholderCount} with unknown peers)`);
+  }
+
+  return conversations;
 }
 
 /**

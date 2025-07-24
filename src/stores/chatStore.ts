@@ -60,9 +60,12 @@ async function initChatStore() {
 async function refreshMessages() {
   try {
     const allMessages = await invoke<Message[]>('get_messages');
-    setMessages(allMessages);
     
-    // Update conversations
+    if (messages().length !== allMessages.length) {
+      console.log(`Chat store: Retrieved ${allMessages.length} messages (was ${messages().length})`);
+    }
+    
+    setMessages(allMessages);
     updateConversations(allMessages);
     
     // Mark messages as read if there's an active conversation
@@ -71,7 +74,7 @@ async function refreshMessages() {
       markMessagesAsRead(activeId);
     }
   } catch (err) {
-    console.error('Failed to refresh messages:', err);
+    console.error('Chat store: Failed to refresh messages:', err instanceof Error ? err.message : String(err));
     setError(`Failed to refresh messages: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -79,13 +82,22 @@ async function refreshMessages() {
 // Update conversations based on messages and peers
 function updateConversations(allMessages: Message[]) {
   const localId = userStore.localUser()?.id;
-  if (!localId) return;
   
+  if (!localId) {
+    console.warn('Chat store: No local user ID available for conversation update');
+    return;
+  }
+  
+  const currentPeers = userStore.peers();
   const newConversations = createConversations(
     allMessages,
-    userStore.peers(),
+    currentPeers,
     localId
   );
+  
+  if (conversations().length !== newConversations.length) {
+    console.log(`Chat store: Updated conversations: ${newConversations.length} (${currentPeers.length} peers available)`);
+  }
   
   setConversations(newConversations);
 }
@@ -93,10 +105,11 @@ function updateConversations(allMessages: Message[]) {
 // Send a message to a peer
 async function sendMessage(peerId: string, content: string) {
   try {
-    console.log('Chat store: Sending message to peer:', peerId, 'Content:', content);
+    console.log(`Chat store: Sending message to ${peerId}`);
+    
     const message = await invoke<Message>('send_message', { peerId, content });
     
-    console.log('Chat store: Message sent successfully:', message);
+    console.log(`Chat store: Message sent successfully (ID: ${message.id})`);
     
     // Update messages
     setMessages(prev => [...prev, message]);
@@ -106,7 +119,7 @@ async function sendMessage(peerId: string, content: string) {
     
     return message;
   } catch (err) {
-    console.error('Chat store: Failed to send message:', err);
+    console.error('Chat store: Failed to send message:', err instanceof Error ? err.message : String(err));
     const errorMessage = err instanceof Error ? err.message : String(err);
     setError(`Failed to send message: ${errorMessage}`);
     toast.error(`Failed to send message: ${errorMessage}`);

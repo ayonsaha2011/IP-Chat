@@ -114,7 +114,7 @@ impl ChatManager {
     }
 
     /// Sends a message to a peer
-    pub async fn send_message(&mut self, peer_id: &str, content: &str) -> AppResult<Message> {
+    pub async fn send_message(&mut self, _peer_id: &str, _content: &str) -> AppResult<Message> {
         // This method is kept for backward compatibility
         // Use send_message_with_peer_ip instead
         Err(AppError::NetworkError("Use send_message_with_peer_ip method instead".to_string()))
@@ -122,6 +122,9 @@ impl ChatManager {
 
     /// Sends a message to a peer with a specific IP
     pub async fn send_message_with_peer_ip(&mut self, peer_id: &str, content: &str, peer_ip: &str) -> AppResult<Message> {
+        info!("ChatManager: Creating message from {} to {} with IP {}", 
+              self.local_user.id, peer_id, peer_ip);
+        
         // Create message
         let message = Message {
             id: Uuid::new_v4().to_string(),
@@ -131,51 +134,77 @@ impl ChatManager {
             timestamp: chrono::Utc::now(),
             read: false,
         };
+        
+        info!("ChatManager: Created message with ID: {}", message.id);
 
         // Store message in our sent messages
         {
             let mut messages = self.messages.lock().unwrap();
             let sent_messages = messages.entry(self.local_user.id.clone()).or_default();
             sent_messages.push(message.clone());
+            info!("ChatManager: Stored message locally, total sent messages: {}", sent_messages.len());
         }
 
         // Send message to peer
+        info!("ChatManager: Attempting to send message to peer over network");
         self.send_message_to_peer(peer_id, &message, Some(peer_ip)).await?;
+        info!("ChatManager: Message sent successfully over network");
 
         Ok(message)
     }
 
     /// Sends a message to a peer over the network
-    async fn send_message_to_peer(&self, _peer_id: &str, message: &Message, peer_ip: Option<&str>) -> AppResult<()> {
+    async fn send_message_to_peer(&self, peer_id: &str, message: &Message, peer_ip: Option<&str>) -> AppResult<()> {
         let target_addr = if let Some(ip) = peer_ip {
             // Use the provided IP address to establish a new connection
             format!("{}:{}", ip, CHAT_PORT)
         } else {
             // No IP provided
+            error!("ChatManager: No IP address provided for peer {}", peer_id);
             return Err(AppError::NetworkError("No IP address provided for peer".to_string()));
         };
 
-        info!("Sending message to {}: {}", target_addr, message.content);
+        info!("ChatManager: Connecting to {} to send message: {}", target_addr, message.content);
+        info!("ChatManager: Message details - ID: {}, From: {} To: {}", 
+              message.id, message.sender_id, message.recipient_id);
 
         // Send the message
-        let message_json =
-            serde_json::to_string(message).map_err(AppError::SerializationError)?;
+        let message_json = serde_json::to_string(message)
+            .map_err(|e| {
+                error!("ChatManager: Failed to serialize message: {}", e);
+                AppError::SerializationError(e)
+            })?;
+        
+        info!("ChatManager: Serialized message JSON (length: {})", message_json.len());
 
         let mut stream = AsyncTcpStream::connect(&target_addr)
             .await
-            .map_err(|e| AppError::NetworkError(format!("Failed to connect to {}: {e}", target_addr)))?;
+            .map_err(|e| {
+                error!("ChatManager: Failed to connect to {}: {}", target_addr, e);
+                AppError::NetworkError(format!("Failed to connect to {}: {e}", target_addr))
+            })?;
+        
+        info!("ChatManager: Successfully connected to {}", target_addr);
 
         stream
             .write_all(message_json.as_bytes())
             .await
-            .map_err(|e| AppError::NetworkError(format!("Failed to send message: {e}")))?;
+            .map_err(|e| {
+                error!("ChatManager: Failed to write message to {}: {}", target_addr, e);
+                AppError::NetworkError(format!("Failed to send message: {e}"))
+            })?;
+        
+        info!("ChatManager: Message data written to stream");
 
         stream
             .flush()
             .await
-            .map_err(|e| AppError::NetworkError(format!("Failed to flush message: {e}")))?;
+            .map_err(|e| {
+                error!("ChatManager: Failed to flush message to {}: {}", target_addr, e);
+                AppError::NetworkError(format!("Failed to flush message: {e}"))
+            })?;
 
-        info!("Message sent successfully to {}", target_addr);
+        info!("ChatManager: Message sent successfully to {}", target_addr);
         Ok(())
     }
 
@@ -245,26 +274,50 @@ impl ChatManager {
 async fn handle_incoming_message(
     mut stream: AsyncTcpStream,
     messages: Arc<Mutex<HashMap<String, Vec<Message>>>>,
-    _local_user: User,
+    local_user: User,
 ) -> AppResult<()> {
+    info!("ChatManager: Handling incoming connection from peer");
+    
     // Read message
     let mut buffer = Vec::new();
     stream
         .read_to_end(&mut buffer)
         .await
-        .map_err(|e| AppError::NetworkError(format!("Failed to read message: {e}")))?;
+        .map_err(|e| {
+            error!("ChatManager: Failed to read incoming message: {}", e);
+            AppError::NetworkError(format!("Failed to read message: {e}"))
+        })?;
+
+    info!("ChatManager: Read {} bytes from incoming connection", buffer.len());
 
     // Parse message
-    let message: Message = serde_json::from_slice(&buffer).map_err(AppError::SerializationError)?;
+    let message: Message = serde_json::from_slice(&buffer)
+        .map_err(|e| {
+            error!("ChatManager: Failed to parse incoming message: {}", e);
+            error!("ChatManager: Raw message data: {:?}", String::from_utf8_lossy(&buffer));
+            AppError::SerializationError(e)
+        })?;
 
-    info!("Received message from {}: {}", message.sender_id, message.content);
+    info!("ChatManager: Received message from {}: {}", message.sender_id, message.content);
+    info!("ChatManager: Message details - ID: {}, To: {}, Timestamp: {}", 
+          message.id, message.recipient_id, message.timestamp);
+
+    // Verify the message is intended for us
+    if message.recipient_id != local_user.id {
+        error!("ChatManager: Received message not intended for us (recipient: {}, our ID: {})", 
+               message.recipient_id, local_user.id);
+        return Ok(()); // Don't error, just ignore
+    }
 
     // Store message in the sender's conversation (for received messages)
     {
         let mut messages = messages.lock().unwrap();
         let peer_messages = messages.entry(message.sender_id.clone()).or_default();
         peer_messages.push(message.clone());
+        info!("ChatManager: Stored incoming message, total messages from {}: {}", 
+              message.sender_id, peer_messages.len());
     }
 
+    info!("ChatManager: Successfully processed incoming message");
     Ok(())
 }

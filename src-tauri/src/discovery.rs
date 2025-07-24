@@ -33,20 +33,31 @@ pub struct NetworkDiscovery {
 
 impl Drop for NetworkDiscovery {
     fn drop(&mut self) {
+        debug!("NetworkDiscovery::drop called for service: {}", self.service_name);
+        
         // Set running flag to false to stop background threads
         if let Ok(mut is_running) = self.is_running.lock() {
             *is_running = false;
+            debug!("Set running flag to false in drop");
         }
 
         // Only try to unregister if service was actually registered
         if let Ok(service_registered) = self.service_registered.lock() {
             if *service_registered {
                 if let Some(daemon) = &self.daemon {
+                    debug!("Attempting to unregister service in drop: {}", self.service_name);
                     // Ignore errors during drop - best effort cleanup
-                    let _ = daemon.unregister(&self.service_name);
+                    match daemon.unregister(&self.service_name) {
+                        Ok(_) => debug!("Successfully unregistered service in drop: {}", self.service_name),
+                        Err(e) => debug!("Could not unregister service in drop (this is normal): {}", e),
+                    }
                 }
+            } else {
+                debug!("Service was not registered, skipping unregistration in drop");
             }
         }
+        
+        debug!("NetworkDiscovery::drop completed for service: {}", self.service_name);
     }
 }
 
@@ -129,24 +140,28 @@ impl NetworkDiscovery {
         // Create a thread to handle the receiver
         let browse_handle_clone = browse_handle.clone();
         let is_running_clone = Arc::clone(&self.is_running);
+        let service_name_clone = self.service_name.clone();
         std::thread::spawn(move || {
+            debug!("Starting mDNS receiver thread for service: {}", service_name_clone);
+            
             loop {
                 // Check if we should stop
                 {
                     let is_running = is_running_clone.lock().unwrap();
                     if !*is_running {
+                        debug!("Stopping mDNS receiver thread (running flag is false)");
                         break;
                     }
                 }
 
-                // Get a new receiver for each iteration
-                let receiver = browse_handle_clone.recv_timeout(Duration::from_millis(500));
+                // Get a new receiver for each iteration with shorter timeout
+                let receiver = browse_handle_clone.recv_timeout(Duration::from_millis(200));
 
                 // Process the event
                 match receiver {
                     Ok(event) => {
                         // Try to send the event to the channel
-                        if event_tx.blocking_send(event).is_err() {
+                        if let Err(_) = event_tx.blocking_send(event) {
                             debug!("Event channel closed, stopping receiver thread");
                             break;
                         }
@@ -157,7 +172,7 @@ impl NetworkDiscovery {
                     }
                 }
             }
-            debug!("mDNS receiver thread exiting");
+            debug!("mDNS receiver thread exiting for service: {}", service_name_clone);
         });
 
         // Set running flag
@@ -261,8 +276,10 @@ impl NetworkDiscovery {
             }
 
             // Set running flag to false when exiting
+            debug!("Discovery event handler task exiting");
             let mut is_running_guard = is_running.lock().unwrap();
             *is_running_guard = false;
+            debug!("Set running flag to false in event handler task");
         });
 
         info!("Network discovery started");
@@ -271,24 +288,36 @@ impl NetworkDiscovery {
 
     /// Stops the network discovery service
     pub async fn stop_discovery(&mut self) -> AppResult<()> {
+        info!("Attempting to stop network discovery...");
+        
         // Check if discovery is running
-        {
+        let was_running = {
             let is_running = self.is_running.lock().unwrap();
-            if !*is_running {
-                return Ok(()); // Already stopped, no error
-            }
+            *is_running
+        };
+        
+        if !was_running {
+            info!("Discovery was not running, nothing to stop");
+            return Ok(()); // Already stopped, no error
         }
 
-        // Send stop signal
-        if let Some(tx) = self.stop_tx.take() {
-            let _ = tx.send(()).await; // Ignore send errors
-        }
-
-        // Set running flag to false first
+        // Set running flag to false first to stop all background tasks
         {
             let mut is_running = self.is_running.lock().unwrap();
             *is_running = false;
         }
+        info!("Set running flag to false");
+
+        // Send stop signal
+        if let Some(tx) = self.stop_tx.take() {
+            match tx.send(()).await {
+                Ok(_) => debug!("Stop signal sent successfully"),
+                Err(_) => debug!("Stop signal channel already closed"),
+            }
+        }
+
+        // Give background tasks time to stop
+        tokio::time::sleep(Duration::from_millis(200)).await;
 
         // Unregister service and shutdown daemon
         if let Some(daemon) = self.daemon.take() {
@@ -299,6 +328,7 @@ impl NetworkDiscovery {
             };
             
             if should_unregister {
+                info!("Unregistering mDNS service: {}", self.service_name);
                 match daemon.unregister(&self.service_name) {
                     Ok(_) => {
                         info!("Successfully unregistered service: {}", self.service_name);
@@ -307,22 +337,32 @@ impl NetworkDiscovery {
                         *service_registered = false;
                     }
                     Err(e) => {
-                        warn!("Failed to unregister service {}: {}", self.service_name, e);
+                        // Log as warning instead of error - this is common during shutdown
+                        warn!("Could not unregister service {} (this is normal during shutdown): {}", self.service_name, e);
+                        // Still mark as unregistered to avoid double unregistration
+                        let mut service_registered = self.service_registered.lock().unwrap();
+                        *service_registered = false;
                     }
                 }
+            } else {
+                debug!("Service was not registered, skipping unregistration");
             }
             
             // Give the daemon time to clean up
-            tokio::time::sleep(Duration::from_millis(100)).await;
+            tokio::time::sleep(Duration::from_millis(150)).await;
         }
 
         // Clear peers
         {
             let mut peers = self.peers.lock().unwrap();
+            let peer_count = peers.len();
             peers.clear();
+            if peer_count > 0 {
+                info!("Cleared {} discovered peers", peer_count);
+            }
         }
 
-        info!("Network discovery stopped");
+        info!("Network discovery stopped successfully");
         Ok(())
     }
 
