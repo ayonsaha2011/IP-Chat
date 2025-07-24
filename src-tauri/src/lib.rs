@@ -149,6 +149,22 @@ async fn send_message(
     info!("Message content: {}", content);
 
     // Get peer information from discovery service
+    let mut peer = state.discovery.get_peer_by_id(&peer_id);
+    
+    // If peer not found, try refreshing discovery and search again
+    if peer.is_none() {
+        info!("Peer {} not found, refreshing discovery...", peer_id);
+        if let Err(e) = state.discovery.refresh_peer_discovery().await {
+            warn!("Failed to refresh peer discovery: {}", e);
+        }
+        
+        // Wait a bit for discovery to refresh
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        
+        // Try again
+        peer = state.discovery.get_peer_by_id(&peer_id);
+    }
+
     let peers = state.discovery.get_discovered_peers();
     info!("Found {} discovered peers", peers.len());
 
@@ -157,12 +173,10 @@ async fn send_message(
         info!("Peer {}: ID={}, Name={}, IP={}", i + 1, p.id, p.name, p.ip);
     }
 
-    let peer = peers.iter().find(|p| p.id == peer_id);
-
     match peer {
-        Some(peer) => {
-            info!("Found peer {} at IP: {}", peer_id, peer.ip);
-            info!("Sending message with peer IP: {}", peer.ip);
+        Some(ref peer_info) => {
+            info!("Found peer {} at IP: {}", peer_id, peer_info.ip);
+            info!("Sending message with peer IP: {}", peer_info.ip);
 
             // Create message and send via connection manager
             let message = crate::models::Message {
@@ -180,7 +194,7 @@ async fn send_message(
             }
             
             // Send via connection manager
-            match state.connection_manager.send_message(&peer_id, &message, &peer.ip, 8765).await {
+            match state.connection_manager.send_message(&peer_id, &message, &peer_info.ip, 8765).await {
                 Ok(_) => {
                     info!(
                         "Message sent successfully - ID: {}, Sender: {}, Recipient: {}",
@@ -201,7 +215,7 @@ async fn send_message(
                     error!("Failed to send message to peer {}: {}", peer_id, e);
                     error!(
                         "Error details: peer_ip={}, content_len={}",
-                        peer.ip,
+                        peer_info.ip,
                         content.len()
                     );
                     Err(e.to_string())
@@ -209,14 +223,19 @@ async fn send_message(
             }
         }
         None => {
-            error!("Peer {} not found in discovered peers", peer_id);
+            error!("Peer {} not found in discovered peers after refresh", peer_id);
             error!(
                 "Available peer IDs: {:?}",
                 peers.iter().map(|p| &p.id).collect::<Vec<_>>()
             );
             Err(format!(
-                "Peer {} not found. Make sure the peer is online and discoverable.",
-                peer_id
+                "Peer {} not found. The peer may have gone offline or network discovery may have failed. Available peers: {}",
+                peer_id,
+                if peers.is_empty() { 
+                    "none".to_string() 
+                } else { 
+                    peers.iter().map(|p| format!("{}({})", p.name, p.id)).collect::<Vec<_>>().join(", ")
+                }
             ))
         }
     }

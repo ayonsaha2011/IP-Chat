@@ -13,7 +13,7 @@ use crate::models::User;
 const SERVICE_TYPE: &str = "_ip-chat._tcp.local.";
 const SERVICE_PORT: u16 = 8765;
 const DISCOVERY_INTERVAL: u64 = 30; // seconds
-const PEER_TIMEOUT: i64 = 300; // 5 minutes instead of 2
+const PEER_TIMEOUT: i64 = 600; // 10 minutes to be more tolerant
 const MAX_DISCOVERY_RETRIES: u8 = 3;
 
 /// Handles network discovery using mDNS
@@ -452,6 +452,31 @@ impl NetworkDiscovery {
     pub fn get_discovered_peers(&self) -> Vec<User> {
         let peers = self.peers.lock().unwrap();
         peers.values().cloned().collect()
+    }
+
+    /// Gets a specific peer by ID, returns None if not found
+    pub fn get_peer_by_id(&self, peer_id: &str) -> Option<User> {
+        let peers = self.peers.lock().unwrap();
+        peers.get(peer_id).cloned()
+    }
+
+    /// Forces a refresh of mDNS discovery to find peers
+    pub async fn refresh_peer_discovery(&self) -> AppResult<()> {
+        if let Some(daemon) = &self.daemon {
+            // Stop and restart search to refresh discovery
+            let _ = daemon.stop_browse(SERVICE_TYPE);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            
+            let event_rx = daemon
+                .browse(SERVICE_TYPE)
+                .map_err(|e| AppError::MdnsError(format!("Failed to restart discovery: {e}")))?;
+            
+            // The event_rx is consumed by the background task, so we don't need to handle it here
+            drop(event_rx);
+            
+            info!("Refreshed mDNS peer discovery");
+        }
+        Ok(())
     }
 
     /// Broadcasts an update to the local user info

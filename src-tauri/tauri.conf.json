@@ -31,9 +31,19 @@
     "shell": {
       "open": true
     },
-    "fs": null,
-    "dialog": null,
-    "notification": null
+    "fs": {
+      "scope": {
+        "allow": ["**"],
+        "deny": []
+      }
+    },
+    "dialog": {
+      "open": true,
+      "save": true
+    },
+    "notification": {
+      "all": true
+    }
   },
   "bundle": {
     "active": true,
@@ -44,6 +54,14 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "entitlements.macos.plist",
+      "exceptionDomain": null,
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null,
+      "minimumSystemVersion": "10.13"
+    }
   }
 }
