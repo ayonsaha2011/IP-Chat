@@ -143,9 +143,17 @@ function App() {
                   <PeerList onSelectPeer={(peerId) => {
                     console.log(`App: onSelectPeer called with ${peerId}`);
                     console.log(`App: Setting active conversation and switching to chat tab`);
-                    chatStore.setActiveConversationId(peerId);
-                    setActiveTab(0);
-                    console.log(`App: Active conversation ID now:`, chatStore.activeConversationId());
+                    
+                    // Ensure conversation exists for this peer
+                    const conversation = chatStore.ensureConversationForPeer(peerId);
+                    if (conversation) {
+                      chatStore.setActiveConversationId(peerId);
+                      setActiveTab(0);
+                      console.log(`App: Active conversation ID now:`, chatStore.activeConversationId());
+                      console.log(`App: Conversation created for:`, conversation.peer.name);
+                    } else {
+                      console.error(`App: Failed to create conversation for peer:`, peerId);
+                    }
                   }} />
                 </TabPanel>
                 

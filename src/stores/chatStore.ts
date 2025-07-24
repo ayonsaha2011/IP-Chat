@@ -1,7 +1,6 @@
 import { createSignal } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { Message, Conversation } from '../types';
-import { userStore } from './userStore';
 import { createConversations } from '../utils';
 import toast from 'solid-toast';
 
@@ -81,6 +80,8 @@ async function refreshMessages() {
 
 // Update conversations based on messages and peers
 function updateConversations(allMessages: Message[]) {
+  // Import userStore dynamically to avoid circular dependency
+  const { userStore } = require('./userStore');
   const localId = userStore.localUser()?.id;
   
   if (!localId) {
@@ -100,6 +101,44 @@ function updateConversations(allMessages: Message[]) {
   }
   
   setConversations(newConversations);
+}
+
+// Create or get a conversation for a peer (used when starting a new chat)
+function ensureConversationForPeer(peerId: string): Conversation | undefined {
+  console.log('Chat store: ensureConversationForPeer called with:', peerId);
+  
+  // Check if conversation already exists
+  let conversation = getConversationByPeerId(peerId);
+  if (conversation) {
+    console.log('Chat store: Found existing conversation for:', conversation.peer.name);
+    return conversation;
+  }
+  
+  // Import userStore dynamically to avoid circular dependency
+  const { userStore } = require('./userStore');
+  const peer = userStore.getPeerById(peerId);
+  console.log('Chat store: Found peer in userStore:', peer ? `${peer.name} (${peer.id})` : 'none');
+  
+  if (peer) {
+    console.log('Chat store: Creating new conversation for peer:', peer.name);
+    conversation = {
+      peer,
+      messages: [],
+      unreadCount: 0,
+    };
+    
+    // Add the new conversation to our list
+    setConversations(prev => {
+      const updated = [...prev, conversation!];
+      console.log('Chat store: Added new conversation, total conversations:', updated.length);
+      return updated;
+    });
+    
+    return conversation;
+  }
+  
+  console.warn('Chat store: Could not find peer with ID:', peerId);
+  return undefined;
 }
 
 // Send a message to a peer
@@ -157,8 +196,18 @@ function getConversationByPeerId(peerId: string): Conversation | undefined {
 // Get the active conversation
 function getActiveConversation(): Conversation | undefined {
   const activeId = activeConversationId();
-  if (!activeId) return undefined;
-  return getConversationByPeerId(activeId);
+  console.log('Chat store: getActiveConversation - activeId:', activeId);
+  
+  if (!activeId) {
+    console.log('Chat store: No active conversation ID');
+    return undefined;
+  }
+  
+  // Ensure conversation exists for this peer (create if needed)
+  const conversation = ensureConversationForPeer(activeId);
+  console.log('Chat store: Final conversation result:', conversation ? `${conversation.peer.name}` : 'none');
+  
+  return conversation;
 }
 
 // Export the chat store
@@ -175,4 +224,5 @@ export const chatStore = {
   markMessagesAsRead,
   getConversationByPeerId,
   getActiveConversation,
+  ensureConversationForPeer,
 };
