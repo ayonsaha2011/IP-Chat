@@ -84,8 +84,11 @@ function MainApp() {
               {/* Peers Panel */}
               <TabPanel h="100%" p="$4" overflow="auto">
                 <PeerList onSelectPeer={(peerId) => {
+                  console.log(`App: onSelectPeer called with ${peerId}`);
+                  console.log(`App: Setting active conversation and switching to chat tab`);
                   chatStore.setActiveConversationId(peerId);
                   setActiveTab(0);
+                  console.log(`App: Active conversation ID now:`, chatStore.activeConversationId());
                 }} />
               </TabPanel>
               
@@ -110,8 +113,6 @@ function App() {
   // State
   const [isInitialized, setIsInitialized] = createSignal(false);
   const [initError, setInitError] = createSignal<string | null>(null);
-  const [renderCount, setRenderCount] = createSignal(0);
-  const [forceUpdate, setForceUpdate] = createSignal(0);
   const { colorMode, toggleColorMode } = useColorMode();
   
   // Force re-render when isInitialized changes
@@ -132,42 +133,8 @@ function App() {
       }
       
       console.log("App: Setting initialized to true");
-      batch(() => {
-        setIsInitialized(true);
-        setRenderCount(prev => prev + 1);
-        setForceUpdate(prev => prev + 1);
-      });
+      setIsInitialized(true);
       console.log("App: Initialization complete");
-      
-      // Force re-render by replacing the entire root
-      setTimeout(() => {
-        if (isInitialized()) {
-          console.log("EMERGENCY: Re-rendering entire app");
-          const root = document.getElementById("root");
-          if (root) {
-            import("solid-js/web").then(({ render }) => {
-              import("@hope-ui/solid").then(({ HopeProvider }) => {
-                import("solid-toast").then(({ Toaster }) => {
-                  // Clear existing content
-                  root.innerHTML = "";
-                  // Re-render with proper providers
-                  render(() => (
-                    <HopeProvider config={{
-                      initialColorMode: "system",
-                      lightTheme: { colors: { primary9: "#0080e6" } },
-                      darkTheme: { colors: { primary9: "#0080e6" } }
-                    }}>
-                      <Toaster position="top-right" />
-                      {/* Render the actual main app */}
-                      <MainApp />
-                    </HopeProvider>
-                  ), root);
-                });
-              });
-            });
-          }
-        }
-      }, 100);
       
     } catch (err) {
       console.error("Failed to initialize app:", err);
@@ -186,7 +153,7 @@ function App() {
     }
   });
 
-  console.log("App: Render #", renderCount(), "forceUpdate =", forceUpdate(), "isInitialized =", isInitialized());
+  console.log("App: Render - isInitialized =", isInitialized());
   
   if (!isInitialized()) {
     return (
