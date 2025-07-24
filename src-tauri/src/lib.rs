@@ -6,11 +6,11 @@ mod models;
 
 use local_ip_address::local_ip;
 use log::{error, info};
-use std::sync::Arc;
-use tokio::sync::Mutex;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Mutex;
 
 use crate::chat::ChatManager;
 use crate::discovery::NetworkDiscovery;
@@ -61,7 +61,7 @@ async fn ensure_services_initialized(state: &mut AppState) {
 
         // Start file transfer service
         info!("Starting file transfer service...");
-        if let Err(e) = state.file_manager.start_file_transfer_service() {
+        if let Err(e) = state.file_manager.start_file_transfer_service().await {
             error!("Failed to start file transfer service: {e}");
         } else {
             info!("File transfer service started successfully");
@@ -137,50 +137,69 @@ async fn send_message(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Message, String> {
     let mut state = state.lock().await;
-    
+
     info!("Attempting to send message to peer: {}", peer_id);
     info!("Message content: {}", content);
-    
+
     // Get peer information from discovery service
     let peers = state.discovery.get_discovered_peers();
     info!("Found {} discovered peers", peers.len());
-    
+
     // Log all discovered peers for debugging
     for (i, p) in peers.iter().enumerate() {
         info!("Peer {}: ID={}, Name={}, IP={}", i + 1, p.id, p.name, p.ip);
     }
-    
+
     let peer = peers.iter().find(|p| p.id == peer_id);
-    
+
     match peer {
         Some(peer) => {
             info!("Found peer {} at IP: {}", peer_id, peer.ip);
             info!("Sending message with peer IP: {}", peer.ip);
-            
+
             // Send message with peer IP
-            match state.chat_manager.send_message_with_peer_ip(&peer_id, &content, &peer.ip).await {
+            match state
+                .chat_manager
+                .send_message_with_peer_ip(&peer_id, &content, &peer.ip)
+                .await
+            {
                 Ok(message) => {
-                    info!("Message sent successfully - ID: {}, Sender: {}, Recipient: {}", 
-                          message.id, message.sender_id, message.recipient_id);
-                    info!("Message timestamp: {}, Content length: {}", 
-                          message.timestamp, message.content.len());
-                    
+                    info!(
+                        "Message sent successfully - ID: {}, Sender: {}, Recipient: {}",
+                        message.id, message.sender_id, message.recipient_id
+                    );
+                    info!(
+                        "Message timestamp: {}, Content length: {}",
+                        message.timestamp,
+                        message.content.len()
+                    );
+
                     // Emit message update event
                     emit_event("message_sent", message.clone());
-                    
+
                     Ok(message)
-                },
+                }
                 Err(e) => {
                     error!("Failed to send message to peer {}: {}", peer_id, e);
-                    error!("Error details: peer_ip={}, content_len={}", peer.ip, content.len());
+                    error!(
+                        "Error details: peer_ip={}, content_len={}",
+                        peer.ip,
+                        content.len()
+                    );
                     Err(e.to_string())
-                },
+                }
             }
         }
         None => {
             error!("Peer {} not found in discovered peers", peer_id);
-            error!("Available peer IDs: {:?}", peers.iter().map(|p| &p.id).collect::<Vec<_>>());
-            Err(format!("Peer {} not found. Make sure the peer is online and discoverable.", peer_id))
+            error!(
+                "Available peer IDs: {:?}",
+                peers.iter().map(|p| &p.id).collect::<Vec<_>>()
+            );
+            Err(format!(
+                "Peer {} not found. Make sure the peer is online and discoverable.",
+                peer_id
+            ))
         }
     }
 }
@@ -191,25 +210,25 @@ async fn get_messages(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Vec<Message>, String> {
     let mut state = state.lock().await;
-    
+
     // Ensure services are initialized
     ensure_services_initialized(&mut state).await;
-    
+
     info!("Getting messages for peer_id: {:?}", peer_id);
-    
+
     let messages = match peer_id {
         Some(id) => {
             let msgs = state.chat_manager.get_messages_for_peer(&id);
             info!("Retrieved {} messages for peer {}", msgs.len(), id);
             msgs
-        },
+        }
         None => {
             let msgs = state.chat_manager.get_all_messages();
             info!("Retrieved {} total messages", msgs.len());
             msgs
         }
     };
-    
+
     Ok(messages)
 }
 
@@ -219,17 +238,17 @@ async fn mark_messages_as_read(
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<(), String> {
     let mut state = state.lock().await;
-    
+
     // Ensure services are initialized
     ensure_services_initialized(&mut state).await;
-    
+
     info!("Marking messages as read for peer: {}", peer_id);
     match state.chat_manager.mark_messages_as_read(&peer_id) {
         Ok(_) => {
             // Emit messages read event
             emit_event("messages_read", peer_id);
             Ok(())
-        },
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -259,7 +278,7 @@ async fn send_file(
                     // Emit file transfer update event
                     emit_event("file_transfer_update", transfer.clone());
                     Ok(transfer)
-                },
+                }
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -284,7 +303,7 @@ async fn accept_file_transfer(
             let transfers = state.file_manager.get_all_transfers();
             emit_event("file_transfers_update", transfers);
             Ok(())
-        },
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -301,7 +320,7 @@ async fn reject_file_transfer(
             let transfers = state.file_manager.get_all_transfers();
             emit_event("file_transfers_update", transfers);
             Ok(())
-        },
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -330,7 +349,7 @@ async fn cancel_file_transfer(
             let transfers = state.file_manager.get_all_transfers();
             emit_event("file_transfers_update", transfers);
             Ok(())
-        },
+        }
         Err(e) => Err(e.to_string()),
     }
 }
@@ -346,13 +365,12 @@ async fn update_username(
     if let Err(e) = state.discovery.broadcast_user_update().await {
         error!("Failed to broadcast user update: {e}");
     }
-    
+
     // Emit user update event
     emit_event("user_updated", state.local_user.clone());
-    
+
     Ok(state.local_user.clone())
 }
-
 
 /// Generate a unique user ID using hostname to distinguish between devices
 fn generate_user_id() -> String {
@@ -410,7 +428,7 @@ pub fn run() {
         .setup(move |app| {
             // Set app handle for event emission
             set_app_handle(app.handle().clone());
-            
+
             // Start services automatically on app startup
             tauri::async_runtime::spawn(async move {
                 let mut state = app_state_clone.lock().await;

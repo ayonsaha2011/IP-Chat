@@ -6,9 +6,9 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;
 
+use crate::emit_event;
 use crate::error::{AppError, AppResult};
 use crate::models::User;
-use crate::emit_event;
 
 const SERVICE_TYPE: &str = "_ip-chat._tcp.local.";
 const SERVICE_PORT: u16 = 8765;
@@ -34,8 +34,11 @@ pub struct NetworkDiscovery {
 
 impl Drop for NetworkDiscovery {
     fn drop(&mut self) {
-        debug!("NetworkDiscovery::drop called for service: {}", self.service_name);
-        
+        debug!(
+            "NetworkDiscovery::drop called for service: {}",
+            self.service_name
+        );
+
         // Set running flag to false to stop background threads
         if let Ok(mut is_running) = self.is_running.lock() {
             *is_running = false;
@@ -46,19 +49,31 @@ impl Drop for NetworkDiscovery {
         if let Ok(service_registered) = self.service_registered.lock() {
             if *service_registered {
                 if let Some(daemon) = &self.daemon {
-                    debug!("Attempting to unregister service in drop: {}", self.service_name);
+                    debug!(
+                        "Attempting to unregister service in drop: {}",
+                        self.service_name
+                    );
                     // Ignore errors during drop - best effort cleanup
                     match daemon.unregister(&self.service_name) {
-                        Ok(_) => debug!("Successfully unregistered service in drop: {}", self.service_name),
-                        Err(e) => debug!("Could not unregister service in drop (this is normal): {}", e),
+                        Ok(_) => debug!(
+                            "Successfully unregistered service in drop: {}",
+                            self.service_name
+                        ),
+                        Err(e) => debug!(
+                            "Could not unregister service in drop (this is normal): {}",
+                            e
+                        ),
                     }
                 }
             } else {
                 debug!("Service was not registered, skipping unregistration in drop");
             }
         }
-        
-        debug!("NetworkDiscovery::drop completed for service: {}", self.service_name);
+
+        debug!(
+            "NetworkDiscovery::drop completed for service: {}",
+            self.service_name
+        );
     }
 }
 
@@ -116,14 +131,22 @@ impl NetworkDiscovery {
 
         match daemon.register(service_info) {
             Ok(_) => {
-                info!("Successfully registered mDNS service: {}", self.service_name);
+                info!(
+                    "Successfully registered mDNS service: {}",
+                    self.service_name
+                );
                 // Mark service as registered
                 let mut service_registered = self.service_registered.lock().unwrap();
                 *service_registered = true;
             }
             Err(e) => {
-                error!("Failed to register mDNS service {}: {}", self.service_name, e);
-                return Err(AppError::MdnsError(format!("Failed to register service: {e}")));
+                error!(
+                    "Failed to register mDNS service {}: {}",
+                    self.service_name, e
+                );
+                return Err(AppError::MdnsError(format!(
+                    "Failed to register service: {e}"
+                )));
             }
         }
 
@@ -143,8 +166,11 @@ impl NetworkDiscovery {
         let is_running_clone = Arc::clone(&self.is_running);
         let service_name_clone = self.service_name.clone();
         std::thread::spawn(move || {
-            debug!("Starting mDNS receiver thread for service: {}", service_name_clone);
-            
+            debug!(
+                "Starting mDNS receiver thread for service: {}",
+                service_name_clone
+            );
+
             loop {
                 // Check if we should stop
                 {
@@ -173,7 +199,10 @@ impl NetworkDiscovery {
                     }
                 }
             }
-            debug!("mDNS receiver thread exiting for service: {}", service_name_clone);
+            debug!(
+                "mDNS receiver thread exiting for service: {}",
+                service_name_clone
+            );
         });
 
         // Set running flag
@@ -223,7 +252,7 @@ impl NetworkDiscovery {
                                                     info!("Discovered peer: {} at {}", user.name, user.ip);
                                                     let mut peers_map = peers.lock().unwrap();
                                                     peers_map.insert(user.id.clone(), user.clone());
-                                                    
+
                                                     // Emit peer discovered event
                                                     emit_event("peer_discovered", user);
                                                 }
@@ -299,13 +328,13 @@ impl NetworkDiscovery {
     /// Stops the network discovery service
     pub async fn stop_discovery(&mut self) -> AppResult<()> {
         info!("Attempting to stop network discovery...");
-        
+
         // Check if discovery is running
         let was_running = {
             let is_running = self.is_running.lock().unwrap();
             *is_running
         };
-        
+
         if !was_running {
             info!("Discovery was not running, nothing to stop");
             return Ok(()); // Already stopped, no error
@@ -336,7 +365,7 @@ impl NetworkDiscovery {
                 let service_registered = self.service_registered.lock().unwrap();
                 *service_registered
             };
-            
+
             if should_unregister {
                 info!("Unregistering mDNS service: {}", self.service_name);
                 match daemon.unregister(&self.service_name) {
@@ -348,7 +377,10 @@ impl NetworkDiscovery {
                     }
                     Err(e) => {
                         // Log as warning instead of error - this is common during shutdown
-                        warn!("Could not unregister service {} (this is normal during shutdown): {}", self.service_name, e);
+                        warn!(
+                            "Could not unregister service {} (this is normal during shutdown): {}",
+                            self.service_name, e
+                        );
                         // Still mark as unregistered to avoid double unregistration
                         let mut service_registered = self.service_registered.lock().unwrap();
                         *service_registered = false;
@@ -357,7 +389,7 @@ impl NetworkDiscovery {
             } else {
                 debug!("Service was not registered, skipping unregistration");
             }
-            
+
             // Give the daemon time to clean up
             tokio::time::sleep(Duration::from_millis(150)).await;
         }
@@ -404,7 +436,7 @@ impl NetworkDiscovery {
                 let service_registered = self.service_registered.lock().unwrap();
                 *service_registered
             };
-            
+
             if should_unregister {
                 let _ = daemon.unregister(&self.service_name);
             }
