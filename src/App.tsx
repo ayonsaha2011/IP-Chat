@@ -144,8 +144,15 @@ function App() {
                     console.log(`App: onSelectPeer called with ${peerId}`);
                     console.log(`App: Setting active conversation and switching to chat tab`);
                     
+                    // Get the peer data directly
+                    const peer = userStore.getPeerById(peerId);
+                    if (!peer) {
+                      console.error(`App: Could not find peer with ID:`, peerId);
+                      return;
+                    }
+                    
                     // Ensure conversation exists for this peer
-                    const conversation = chatStore.ensureConversationForPeer(peerId);
+                    const conversation = chatStore.ensureConversationForPeer(peerId, peer);
                     if (conversation) {
                       chatStore.setActiveConversationId(peerId);
                       setActiveTab(0);

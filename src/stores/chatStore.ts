@@ -65,7 +65,16 @@ async function refreshMessages() {
     }
     
     setMessages(allMessages);
-    updateConversations(allMessages);
+    
+    // Get user data for conversation update
+    const globalUserStore = (window as any).__userStore;
+    if (globalUserStore) {
+      const localUserId = globalUserStore.localUser()?.id;
+      const peers = globalUserStore.peers();
+      if (localUserId) {
+        updateConversations(allMessages, { localUserId, peers });
+      }
+    }
     
     // Mark messages as read if there's an active conversation
     const activeId = activeConversationId();
@@ -79,17 +88,27 @@ async function refreshMessages() {
 }
 
 // Update conversations based on messages and peers
-function updateConversations(allMessages: Message[]) {
-  // Import userStore dynamically to avoid circular dependency
-  const { userStore } = require('./userStore');
-  const localId = userStore.localUser()?.id;
+function updateConversations(allMessages: Message[], peersData?: { localUserId: string, peers: any[] }) {
+  let localId: string | undefined;
+  let currentPeers: any[] = [];
+  
+  if (peersData) {
+    localId = peersData.localUserId;
+    currentPeers = peersData.peers;
+  } else {
+    // Try to get the data from window context if available
+    const globalUserStore = (window as any).__userStore;
+    if (globalUserStore) {
+      localId = globalUserStore.localUser()?.id;
+      currentPeers = globalUserStore.peers();
+    }
+  }
   
   if (!localId) {
     console.warn('Chat store: No local user ID available for conversation update');
     return;
   }
   
-  const currentPeers = userStore.peers();
   const newConversations = createConversations(
     allMessages,
     currentPeers,
@@ -104,7 +123,7 @@ function updateConversations(allMessages: Message[]) {
 }
 
 // Create or get a conversation for a peer (used when starting a new chat)
-function ensureConversationForPeer(peerId: string): Conversation | undefined {
+function ensureConversationForPeer(peerId: string, peerData?: any): Conversation | undefined {
   console.log('Chat store: ensureConversationForPeer called with:', peerId);
   
   // Check if conversation already exists
@@ -114,10 +133,16 @@ function ensureConversationForPeer(peerId: string): Conversation | undefined {
     return conversation;
   }
   
-  // Import userStore dynamically to avoid circular dependency
-  const { userStore } = require('./userStore');
-  const peer = userStore.getPeerById(peerId);
-  console.log('Chat store: Found peer in userStore:', peer ? `${peer.name} (${peer.id})` : 'none');
+  // Try to get peer data from passed parameter or global context
+  let peer = peerData;
+  if (!peer) {
+    const globalUserStore = (window as any).__userStore;
+    if (globalUserStore) {
+      peer = globalUserStore.getPeerById(peerId);
+    }
+  }
+  
+  console.log('Chat store: Found peer data:', peer ? `${peer.name} (${peer.id})` : 'none');
   
   if (peer) {
     console.log('Chat store: Creating new conversation for peer:', peer.name);
@@ -154,7 +179,14 @@ async function sendMessage(peerId: string, content: string) {
     setMessages(prev => [...prev, message]);
     
     // Update conversations
-    updateConversations([...messages(), message]);
+    const globalUserStore = (window as any).__userStore;
+    if (globalUserStore) {
+      const localUserId = globalUserStore.localUser()?.id;
+      const peers = globalUserStore.peers();
+      if (localUserId) {
+        updateConversations([...messages(), message], { localUserId, peers });
+      }
+    }
     
     return message;
   } catch (err) {
@@ -181,7 +213,14 @@ async function markMessagesAsRead(peerId: string) {
     );
     
     // Update conversations
-    updateConversations(messages());
+    const globalUserStore = (window as any).__userStore;
+    if (globalUserStore) {
+      const localUserId = globalUserStore.localUser()?.id;
+      const peers = globalUserStore.peers();
+      if (localUserId) {
+        updateConversations(messages(), { localUserId, peers });
+      }
+    }
   } catch (err) {
     console.error('Failed to mark messages as read:', err);
     setError(`Failed to mark messages as read: ${err instanceof Error ? err.message : String(err)}`);

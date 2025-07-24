@@ -209,3 +209,6 @@ export const userStore = {
   getPeerById,
   cleanup,
 };
+
+// Make userStore available globally to avoid circular dependencies
+(window as any).__userStore = userStore;
