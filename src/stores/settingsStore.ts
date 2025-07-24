@@ -26,19 +26,15 @@ async function initSettingsStore() {
     setIsLoading(true);
     setError(null);
     
-    console.log('Settings store: Starting initialization...');
     
     // Load settings from storage
     const storedSettings = localStorage.getItem(SETTINGS_STORAGE_KEY);
     if (storedSettings) {
       const parsedSettings = JSON.parse(storedSettings);
       setSettings({ ...DEFAULT_SETTINGS, ...parsedSettings });
-      console.log('Settings store: Loaded settings from storage');
     } else {
-      console.log('Settings store: No stored settings found, using defaults');
     }
     
-    console.log('Settings store: Initialization completed');
     
   } catch (err) {
     console.error('Failed to initialize settings store:', err);

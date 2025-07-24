@@ -14,7 +14,6 @@ export function formatDate(date: string | Date, formatStr: string = 'PPp'): stri
     
     // Check if the date is valid
     if (isNaN(dateObj.getTime())) {
-      console.warn('Invalid date value:', date);
       return 'Invalid Date';
     }
     
@@ -36,7 +35,6 @@ export function formatRelativeTime(date: string | Date): string {
     
     // Check if the date is valid
     if (isNaN(dateObj.getTime())) {
-      console.warn('Invalid date value:', date);
       return 'Unknown';
     }
     

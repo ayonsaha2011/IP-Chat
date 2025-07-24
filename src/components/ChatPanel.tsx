@@ -56,21 +56,10 @@ const ChatPanel: Component = () => {
     const content = message().trim();
     const currentPeer = peer();
     
-    if (!content) {
-      console.log("ChatPanel: Cannot send - no content");
-      return;
-    }
-    
-    if (!currentPeer) {
-      console.log("ChatPanel: Cannot send - no peer selected");
-      return;
-    }
-    
-    console.log(`ChatPanel: Sending message to ${currentPeer.name}`);
+    if (!content || !currentPeer) return;
     
     try {
       await chatStore.sendMessage(currentPeer.id, content);
-      console.log("ChatPanel: Message sent successfully");
       setMessage("");
       
       // Force a refresh of messages to ensure UI is updated
@@ -78,12 +67,7 @@ const ChatPanel: Component = () => {
         chatStore.refreshMessages();
       }, 100);
     } catch (err) {
-      console.error("ChatPanel: Failed to send message:", err instanceof Error ? err.message : String(err));
-      
-      // Show user-friendly error message
-      if (err instanceof Error && err.message.includes("Peer not found")) {
-        console.warn("ChatPanel: Peer not discovered - ensure peer is online and discoverable");
-      }
+      console.error("Failed to send message:", err instanceof Error ? err.message : String(err));
     }
   };
   

@@ -17,7 +17,6 @@ async function initFileTransferStore() {
     setIsLoading(true);
     setError(null);
     
-    console.log('File transfer store: Starting initialization...');
     
     // Load transfers (with timeout to prevent hanging)
     try {
@@ -28,14 +27,14 @@ async function initFileTransferStore() {
         )
       ]);
     } catch (err) {
-      console.warn('File transfer store: Failed to load initial transfers, continuing anyway:', err);
+      // Failed to load initial transfers, continuing anyway
       // Don't fail initialization if transfers can't be loaded
     }
     
     // Set up periodic transfer refresh
     const intervalId = setInterval(() => {
       refreshTransfers().catch(err => {
-        console.warn('File transfer store: Failed to refresh transfers:', err);
+        // Failed to refresh transfers
       });
     }, 2000); // Refresh every 2 seconds
     
@@ -44,7 +43,6 @@ async function initFileTransferStore() {
       clearInterval(intervalId);
     });
     
-    console.log('File transfer store: Initialization completed');
     
   } catch (err) {
     console.error('Failed to initialize file transfer store:', err);

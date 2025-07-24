@@ -16,56 +16,47 @@ async function initUserStore() {
     setIsLoading(true);
     setError(null);
     
-    console.log('Starting user store initialization...');
     
     // Clean up any existing discovery first
     try {
       await invoke('stop_discovery');
-      console.log('Cleaned up existing discovery service');
     } catch (err) {
       // Ignore errors if discovery wasn't running
       const errorMessage = err instanceof Error ? err.message : String(err);
       if (errorMessage.includes('Discovery not running') || errorMessage.includes('not running')) {
-        console.log('No existing discovery to clean up');
       } else {
-        console.log('Non-critical error during cleanup:', errorMessage);
       }
     }
     
     // Get local user info with timeout
-    console.log('Getting local user info...');
     const user = await Promise.race([
       invoke<User>('get_local_user'),
       new Promise<never>((_, reject) => 
         setTimeout(() => reject(new Error('Timeout getting local user info')), 10000)
       )
     ]);
-    console.log('Local user info received:', user);
     setLocalUser(user);
     
     // Start network discovery (with fallback)
-    console.log('Starting network discovery...');
     try {
       await startDiscovery();
     } catch (err) {
-      console.warn('Discovery failed, but continuing initialization:', err);
       // Don't throw here, just log the warning and continue
     }
     
     // Set up periodic peer refresh after a delay
     setTimeout(() => {
       const intervalId = setInterval(() => {
-        refreshPeers().catch(console.error);
+        refreshPeers().catch(() => {});
       }, 10000); // Refresh every 10 seconds
       
       // Clean up on window unload
       window.addEventListener('beforeunload', () => {
         clearInterval(intervalId);
-        stopDiscovery().catch(console.error);
+        stopDiscovery().catch(() => {});
       });
     }, 2000); // Start periodic refresh after 2 seconds
     
-    console.log('User store initialization completed successfully');
     
   } catch (err) {
     console.error('Failed to initialize user store:', err);
@@ -82,14 +73,11 @@ async function startDiscovery() {
     // First, try to stop any existing discovery to ensure clean state
     try {
       await invoke('stop_discovery');
-      console.log('Stopped existing discovery service');
     } catch (err) {
       // Ignore errors if discovery wasn't running
       const errorMessage = err instanceof Error ? err.message : String(err);
       if (errorMessage.includes('Discovery not running') || errorMessage.includes('not running')) {
-        console.log('No existing discovery to stop');
       } else {
-        console.log('Non-critical error stopping existing discovery:', errorMessage);
       }
     }
     
@@ -122,12 +110,10 @@ async function stopDiscovery() {
   try {
     await invoke('stop_discovery');
     setIsDiscoveryRunning(false);
-    console.log('Discovery stopped successfully');
   } catch (err) {
     // Check if the error is because discovery wasn't running
     const errorMessage = err instanceof Error ? err.message : String(err);
     if (errorMessage.includes('Discovery not running') || errorMessage.includes('not running')) {
-      console.log('Discovery was not running, nothing to stop');
       setIsDiscoveryRunning(false);
     } else {
       console.error('Failed to stop discovery:', err);
@@ -147,17 +133,9 @@ async function refreshPeers() {
       )
     ]);
     
-    const currentPeerCount = peers().length;
     setPeers(discoveredPeers);
-    
-    if (currentPeerCount !== discoveredPeers.length) {
-      console.log(`UserStore: Peers updated: ${currentPeerCount} → ${discoveredPeers.length}`);
-      if (discoveredPeers.length > 0) {
-        console.log('UserStore: Available peers:', discoveredPeers.map(p => `${p.name} (${p.id})`));
-      }
-    }
   } catch (err) {
-    console.error('UserStore: Failed to refresh peers:', err instanceof Error ? err.message : String(err));
+    console.error('Failed to refresh peers:', err instanceof Error ? err.message : String(err));
     setError(`Failed to refresh peers: ${err instanceof Error ? err.message : String(err)}`);
   }
 }
@@ -185,12 +163,9 @@ function getPeerById(id: string): User | undefined {
 // Cleanup function
 async function cleanup() {
   try {
-    console.log('Starting user store cleanup...');
     await stopDiscovery();
-    console.log('User store cleanup completed');
   } catch (err) {
     // Log the error but don't treat it as critical
-    console.log('Cleanup encountered non-critical error:', err);
   }
 }
 

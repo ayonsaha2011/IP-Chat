@@ -17,7 +17,6 @@ async function initChatStore() {
     setIsLoading(true);
     setError(null);
     
-    console.log('Chat store: Starting initialization...');
     
     // Load messages (with timeout to prevent hanging)
     try {
@@ -28,14 +27,14 @@ async function initChatStore() {
         )
       ]);
     } catch (err) {
-      console.warn('Chat store: Failed to load initial messages, continuing anyway:', err);
+      // Failed to load initial messages, continuing anyway
       // Don't fail initialization if messages can't be loaded
     }
     
     // Set up periodic message refresh
     const intervalId = setInterval(() => {
       refreshMessages().catch(err => {
-        console.warn('Chat store: Failed to refresh messages:', err);
+        // Failed to refresh messages
       });
     }, 5000); // Refresh every 5 seconds
     
@@ -44,7 +43,6 @@ async function initChatStore() {
       clearInterval(intervalId);
     });
     
-    console.log('Chat store: Initialization completed');
     
   } catch (err) {
     console.error('Failed to initialize chat store:', err);
@@ -59,10 +57,6 @@ async function initChatStore() {
 async function refreshMessages() {
   try {
     const allMessages = await invoke<Message[]>('get_messages');
-    
-    if (messages().length !== allMessages.length) {
-      console.log(`Chat store: Retrieved ${allMessages.length} messages (was ${messages().length})`);
-    }
     
     setMessages(allMessages);
     
@@ -105,7 +99,6 @@ function updateConversations(allMessages: Message[], peersData?: { localUserId: 
   }
   
   if (!localId) {
-    console.warn('Chat store: No local user ID available for conversation update');
     return;
   }
   
@@ -115,21 +108,14 @@ function updateConversations(allMessages: Message[], peersData?: { localUserId: 
     localId
   );
   
-  if (conversations().length !== newConversations.length) {
-    console.log(`Chat store: Updated conversations: ${newConversations.length} (${currentPeers.length} peers available)`);
-  }
-  
   setConversations(newConversations);
 }
 
 // Create or get a conversation for a peer (used when starting a new chat)
 function ensureConversationForPeer(peerId: string, peerData?: any): Conversation | undefined {
-  console.log('Chat store: ensureConversationForPeer called with:', peerId);
-  
   // Check if conversation already exists
   let conversation = getConversationByPeerId(peerId);
   if (conversation) {
-    console.log('Chat store: Found existing conversation for:', conversation.peer.name);
     return conversation;
   }
   
@@ -142,10 +128,7 @@ function ensureConversationForPeer(peerId: string, peerData?: any): Conversation
     }
   }
   
-  console.log('Chat store: Found peer data:', peer ? `${peer.name} (${peer.id})` : 'none');
-  
   if (peer) {
-    console.log('Chat store: Creating new conversation for peer:', peer.name);
     conversation = {
       peer,
       messages: [],
@@ -153,27 +136,17 @@ function ensureConversationForPeer(peerId: string, peerData?: any): Conversation
     };
     
     // Add the new conversation to our list
-    setConversations(prev => {
-      const updated = [...prev, conversation!];
-      console.log('Chat store: Added new conversation, total conversations:', updated.length);
-      return updated;
-    });
-    
+    setConversations(prev => [...prev, conversation!]);
     return conversation;
   }
   
-  console.warn('Chat store: Could not find peer with ID:', peerId);
   return undefined;
 }
 
 // Send a message to a peer
 async function sendMessage(peerId: string, content: string) {
   try {
-    console.log(`Chat store: Sending message to ${peerId}`);
-    
     const message = await invoke<Message>('send_message', { peerId, content });
-    
-    console.log(`Chat store: Message sent successfully (ID: ${message.id})`);
     
     // Update messages
     setMessages(prev => [...prev, message]);
@@ -190,7 +163,7 @@ async function sendMessage(peerId: string, content: string) {
     
     return message;
   } catch (err) {
-    console.error('Chat store: Failed to send message:', err instanceof Error ? err.message : String(err));
+    console.error('Failed to send message:', err instanceof Error ? err.message : String(err));
     const errorMessage = err instanceof Error ? err.message : String(err);
     setError(`Failed to send message: ${errorMessage}`);
     toast.error(`Failed to send message: ${errorMessage}`);
@@ -235,18 +208,10 @@ function getConversationByPeerId(peerId: string): Conversation | undefined {
 // Get the active conversation
 function getActiveConversation(): Conversation | undefined {
   const activeId = activeConversationId();
-  console.log('Chat store: getActiveConversation - activeId:', activeId);
-  
-  if (!activeId) {
-    console.log('Chat store: No active conversation ID');
-    return undefined;
-  }
+  if (!activeId) return undefined;
   
   // Ensure conversation exists for this peer (create if needed)
-  const conversation = ensureConversationForPeer(activeId);
-  console.log('Chat store: Final conversation result:', conversation ? `${conversation.peer.name}` : 'none');
-  
-  return conversation;
+  return ensureConversationForPeer(activeId);
 }
 
 // Export the chat store
