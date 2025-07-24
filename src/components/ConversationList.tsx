@@ -73,8 +73,8 @@ const ConversationList: Component<ConversationListProps> = (props) => {
                         {conversation.peer.name}
                       </Text>
                       <Text fontSize="$xs" color="$neutral11" flexShrink={0}>
-                        {conversation.lastMessage 
-                          ? formatRelativeTime(conversation.lastMessage.timestamp)
+                        {conversation.lastItem 
+                          ? formatRelativeTime(conversation.lastItem.timestamp)
                           : "Just now"
                         }
                       </Text>
@@ -83,11 +83,15 @@ const ConversationList: Component<ConversationListProps> = (props) => {
                     <HStack justifyContent="space-between" w="100%">
                       <Text
                         fontSize="$sm"
-                        color={conversation.lastMessage ? "$neutral11" : "$neutral10"}
+                        color={conversation.lastItem ? "$neutral11" : "$neutral10"}
                         truncate
                         flex="1"
                       >
-                        {conversation.lastMessage?.content || "Start a conversation..."}
+                        {conversation.lastItem 
+                          ? (conversation.lastItem.type === 'message' 
+                              ? conversation.lastItem.content 
+                              : `📁 ${conversation.lastItem.fileName}`)
+                          : "Start a conversation..."}
                       </Text>
                       
                       <Show when={conversation.unreadCount > 0}>

@@ -45,12 +45,30 @@ export interface FileTransfer {
   error?: string;
 }
 
+// Conversation item type - can be either a message or file transfer
+export interface ConversationItem {
+  id: string;
+  type: 'message' | 'file';
+  senderId: string;
+  recipientId: string;
+  timestamp: string;
+  read?: boolean;
+  // Message-specific fields
+  content?: string;
+  // File transfer-specific fields
+  fileName?: string;
+  fileSize?: number;
+  status?: TransferStatus;
+  bytesTransferred?: number;
+  error?: string;
+}
+
 // Conversation type (for UI)
 export interface Conversation {
   peer: User;
-  messages: Message[];
+  items: ConversationItem[]; // Changed from messages to items
   unreadCount: number;
-  lastMessage?: Message;
+  lastItem?: ConversationItem; // Changed from lastMessage to lastItem
 }
 
 // App settings

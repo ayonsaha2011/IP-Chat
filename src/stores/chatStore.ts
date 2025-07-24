@@ -1,12 +1,14 @@
 import { createSignal } from 'solid-js';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
-import { Message, Conversation } from '../types';
+import { sendNotification, isPermissionGranted, requestPermission } from '@tauri-apps/plugin-notification';
+import { Message, Conversation, FileTransfer } from '../types';
 import { createConversations } from '../utils';
 import toast from 'solid-toast';
 
 // Create signals for chat state
 const [messages, setMessages] = createSignal<Message[]>([]);
+const [fileTransfers, setFileTransfers] = createSignal<FileTransfer[]>([]);
 const [conversations, setConversations] = createSignal<Conversation[]>([]);
 const [activeConversationId, setActiveConversationId] = createSignal<string | null>(null);
 const [isLoading, setIsLoading] = createSignal(true);
@@ -14,6 +16,37 @@ const [error, setError] = createSignal<string | null>(null);
 
 // Track initialization state
 let isInitialized = false;
+
+// Notification helper functions
+async function showNotification(title: string, body: string) {
+  try {
+    let permissionGranted = await isPermissionGranted();
+    
+    if (!permissionGranted) {
+      const permission = await requestPermission();
+      permissionGranted = permission === 'granted';
+    }
+    
+    if (permissionGranted) {
+      await sendNotification({
+        title,
+        body,
+        icon: 'icons/32x32.png'
+      });
+    }
+  } catch (error) {
+    console.warn('Failed to show notification:', error);
+  }
+}
+
+function getPeerName(peerId: string): string {
+  const globalUserStore = (window as any).__userStore;
+  if (globalUserStore) {
+    const peer = globalUserStore.getPeerById(peerId);
+    return peer?.name || `User ${peerId.substring(0, 8)}`;
+  }
+  return `User ${peerId.substring(0, 8)}`;
+}
 
 // Initialize the chat store
 async function initChatStore() {
@@ -61,7 +94,7 @@ async function initChatStore() {
           const localUserId = globalUserStore.localUser()?.id;
           const peers = globalUserStore.peers();
           if (localUserId) {
-            updateConversations(messages(), { localUserId, peers });
+            updateConversations(messages(), fileTransfers(), { localUserId, peers });
           }
         }
       });
@@ -84,12 +117,14 @@ async function initChatStore() {
           const localUserId = globalUserStore.localUser()?.id;
           const peers = globalUserStore.peers();
           if (localUserId) {
-            updateConversations(messages(), { localUserId, peers });
+            updateConversations(messages(), fileTransfers(), { localUserId, peers });
           }
         }
         
-        // Show notification for new messages
-        toast.success(`New message from ${message.senderId}`);
+        // Show notifications for new messages
+        const peerName = getPeerName(message.senderId);
+        toast.success(`New message from ${peerName}`);
+        showNotification(`New message from ${peerName}`, message.content);
       });
       
       // Listen for messages read events
@@ -110,7 +145,47 @@ async function initChatStore() {
           const localUserId = globalUserStore.localUser()?.id;
           const peers = globalUserStore.peers();
           if (localUserId) {
-            updateConversations(messages(), { localUserId, peers });
+            updateConversations(messages(), fileTransfers(), { localUserId, peers });
+          }
+        }
+      });
+      
+      // Listen for file transfer update events
+      const unlistenFileTransferUpdate = await listen<FileTransfer>('file_transfer_update', (event) => {
+        const transfer = event.payload;
+        setFileTransfers(prev => {
+          // Check if transfer already exists to prevent duplicates
+          const exists = prev.some(t => t.id === transfer.id);
+          if (!exists) {
+            return [...prev, transfer];
+          } else {
+            // Update existing transfer
+            return prev.map(t => t.id === transfer.id ? transfer : t);
+          }
+        });
+        
+        // Update conversations
+        const globalUserStore = (window as any).__userStore;
+        if (globalUserStore) {
+          const localUserId = globalUserStore.localUser()?.id;
+          const peers = globalUserStore.peers();
+          if (localUserId) {
+            updateConversations(messages(), fileTransfers(), { localUserId, peers });
+          }
+        }
+        
+        // Show notifications for file transfers
+        const peerName = getPeerName(transfer.senderId);
+        if (transfer.senderId !== globalUserStore.localUser()?.id) {
+          if (transfer.status === 'Pending') {
+            showNotification(`New file from ${peerName}`, `${transfer.fileName} (${(transfer.fileSize / 1024 / 1024).toFixed(1)} MB)`);
+            toast.success(`File received from ${peerName}: ${transfer.fileName}`);
+          } else if (transfer.status === 'Completed') {
+            showNotification('File transfer completed', `${transfer.fileName} from ${peerName}`);
+            toast.success(`File transfer completed: ${transfer.fileName}`);
+          } else if (transfer.status === 'Failed') {
+            showNotification('File transfer failed', `${transfer.fileName} from ${peerName}`);
+            toast.error(`File transfer failed: ${transfer.fileName}`);
           }
         }
       });
@@ -120,6 +195,7 @@ async function initChatStore() {
         unlistenMessageSent();
         unlistenMessageReceived();
         unlistenMessagesRead();
+        unlistenFileTransferUpdate();
       };
     };
     
@@ -145,12 +221,14 @@ async function initChatStore() {
   }
 }
 
-// Refresh messages
+// Refresh messages and file transfers
 async function refreshMessages() {
   try {
     const allMessages = await invoke<Message[]>('get_messages');
+    const allFileTransfers = await invoke<FileTransfer[]>('get_file_transfers');
     
     setMessages(allMessages);
+    setFileTransfers(allFileTransfers);
     
     // Get user data for conversation update
     const globalUserStore = (window as any).__userStore;
@@ -158,7 +236,7 @@ async function refreshMessages() {
       const localUserId = globalUserStore.localUser()?.id;
       const peers = globalUserStore.peers();
       if (localUserId) {
-        updateConversations(allMessages, { localUserId, peers });
+        updateConversations(allMessages, allFileTransfers, { localUserId, peers });
       }
     }
     
@@ -173,8 +251,8 @@ async function refreshMessages() {
   }
 }
 
-// Update conversations based on messages and peers
-function updateConversations(allMessages: Message[], peersData?: { localUserId: string, peers: any[] }) {
+// Update conversations based on messages, file transfers and peers
+function updateConversations(allMessages: Message[], allFileTransfers: FileTransfer[], peersData?: { localUserId: string, peers: any[] }) {
   let localId: string | undefined;
   let currentPeers: any[] = [];
   
@@ -196,6 +274,7 @@ function updateConversations(allMessages: Message[], peersData?: { localUserId: 
   
   const newConversations = createConversations(
     allMessages,
+    allFileTransfers,
     currentPeers,
     localId
   );
@@ -223,7 +302,7 @@ function ensureConversationForPeer(peerId: string, peerData?: any): Conversation
   if (peer) {
     conversation = {
       peer,
-      messages: [],
+      items: [],
       unreadCount: 0,
     };
     
@@ -273,7 +352,7 @@ async function markMessagesAsRead(peerId: string) {
       const localUserId = globalUserStore.localUser()?.id;
       const peers = globalUserStore.peers();
       if (localUserId) {
-        updateConversations(messages(), { localUserId, peers });
+        updateConversations(messages(), fileTransfers(), { localUserId, peers });
       }
     }
   } catch (err) {
@@ -299,6 +378,7 @@ function getActiveConversation(): Conversation | undefined {
 // Export the chat store
 export const chatStore = {
   messages,
+  fileTransfers,
   conversations,
   activeConversationId,
   setActiveConversationId,
