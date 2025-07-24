@@ -46,7 +46,7 @@ impl ChatManager {
     pub fn start_chat_service(&mut self) -> AppResult<()> {
         use tokio::net::TcpListener as AsyncTcpListener;
 
-        let messages = Arc::clone(&self.messages);
+        let _messages = Arc::clone(&self.messages);
         let local_user = self.local_user.clone();
 
         // Spawn async task to handle incoming connections
@@ -69,16 +69,14 @@ impl ChatManager {
                         debug!("New chat connection from: {addr}");
 
                         // Clone necessary values for the connection handler
-                        let messages_clone = Arc::clone(&messages);
                         let local_user_clone = local_user.clone();
 
-                        // Spawn task to handle the connection
+                        // Spawn task to handle the connection using connection manager
                         tokio::spawn(async move {
-                            if let Err(e) =
-                                handle_incoming_message(stream, messages_clone, local_user_clone)
-                                    .await
-                            {
-                                error!("Error handling incoming message: {e}");
+                            // Create a temporary connection manager for handling this connection
+                            let temp_conn_manager = crate::connection_manager::ConnectionManager::new(local_user_clone);
+                            if let Err(e) = temp_conn_manager.handle_incoming_connection(stream, addr).await {
+                                error!("Error handling incoming connection: {e}");
                             }
                         });
                     }
@@ -282,6 +280,15 @@ impl ChatManager {
         // Sort by timestamp
         all_messages.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
         all_messages
+    }
+
+    /// Stores a sent message locally
+    pub fn store_sent_message(&self, message: &Message) -> AppResult<()> {
+        let mut messages = self.messages.lock().unwrap();
+        let sent_messages = messages.entry(self.local_user.id.clone()).or_default();
+        sent_messages.push(message.clone());
+        info!("Stored sent message locally, total sent messages: {}", sent_messages.len());
+        Ok(())
     }
 
     /// Marks messages from a peer as read

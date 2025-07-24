@@ -1,11 +1,12 @@
 mod chat;
+mod connection_manager;
 mod discovery;
 mod error;
 mod file_transfer;
 mod models;
 
 use local_ip_address::local_ip;
-use log::{error, info};
+use log::{error, info, warn};
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -13,6 +14,7 @@ use tauri::{AppHandle, Emitter};
 use tokio::sync::Mutex;
 
 use crate::chat::ChatManager;
+use crate::connection_manager::ConnectionManager;
 use crate::discovery::NetworkDiscovery;
 use crate::file_transfer::FileTransferManager;
 use crate::models::{AppState, FileTransfer, Message, User};
@@ -58,6 +60,11 @@ async fn ensure_services_initialized(state: &mut AppState) {
         } else {
             info!("Chat service started successfully");
         }
+        
+        // Start connection manager heartbeat service
+        info!("Starting connection manager...");
+        state.connection_manager.start_heartbeat_service();
+        info!("Connection manager started successfully");
 
         // Start file transfer service
         info!("Starting file transfer service...");
@@ -136,7 +143,7 @@ async fn send_message(
     content: String,
     state: tauri::State<'_, Arc<Mutex<AppState>>>,
 ) -> Result<Message, String> {
-    let mut state = state.lock().await;
+    let state = state.lock().await;
 
     info!("Attempting to send message to peer: {}", peer_id);
     info!("Message content: {}", content);
@@ -157,13 +164,24 @@ async fn send_message(
             info!("Found peer {} at IP: {}", peer_id, peer.ip);
             info!("Sending message with peer IP: {}", peer.ip);
 
-            // Send message with peer IP
-            match state
-                .chat_manager
-                .send_message_with_peer_ip(&peer_id, &content, &peer.ip)
-                .await
-            {
-                Ok(message) => {
+            // Create message and send via connection manager
+            let message = crate::models::Message {
+                id: uuid::Uuid::new_v4().to_string(),
+                sender_id: state.local_user.id.clone(),
+                recipient_id: peer_id.clone(),
+                content: content.clone(),
+                timestamp: chrono::Utc::now(),
+                read: false,
+            };
+            
+            // Store message locally first
+            if let Err(e) = state.chat_manager.store_sent_message(&message) {
+                warn!("Failed to store message locally: {}", e);
+            }
+            
+            // Send via connection manager
+            match state.connection_manager.send_message(&peer_id, &message, &peer.ip, 8765).await {
+                Ok(_) => {
                     info!(
                         "Message sent successfully - ID: {}, Sender: {}, Recipient: {}",
                         message.id, message.sender_id, message.recipient_id
@@ -411,12 +429,14 @@ pub fn run() {
     // Initialize app state
     let network_discovery = NetworkDiscovery::new(local_user.clone());
     let chat_manager = ChatManager::new(local_user.clone());
+    let connection_manager = ConnectionManager::new(local_user.clone());
     let file_manager = FileTransferManager::new(local_user.clone());
 
     let app_state = Arc::new(Mutex::new(AppState {
         local_user,
         discovery: network_discovery,
         chat_manager,
+        connection_manager,
         file_manager,
         services_initialized: false,
     }));

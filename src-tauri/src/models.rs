@@ -2,6 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::chat::ChatManager;
+use crate::connection_manager::ConnectionManager;
 use crate::discovery::NetworkDiscovery;
 use crate::file_transfer::FileTransferManager;
 
@@ -94,6 +95,8 @@ pub struct AppState {
     pub discovery: NetworkDiscovery,
     /// Chat manager
     pub chat_manager: ChatManager,
+    /// Connection manager for peer connections
+    pub connection_manager: ConnectionManager,
     /// File transfer manager
     pub file_manager: FileTransferManager,
     /// Whether services have been initialized
