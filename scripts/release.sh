@@ -75,7 +75,9 @@ print_status "Updating version to: $NEW_VERSION"
 
 # Update package.json
 print_status "Updating package.json..."
-npm version "$NEW_VERSION" --no-git-tag-version
+# Use sed instead of npm version since we're using pnpm
+sed -i.bak "s/\"version\": \".*\"/\"version\": \"$NEW_VERSION\"/" package.json
+rm package.json.bak
 
 # Update Cargo.toml
 print_status "Updating Cargo.toml..."
@@ -90,7 +92,7 @@ cd ..
 
 # Commit changes
 print_status "Committing version changes..."
-git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock
+git add package.json pnpm-lock.yaml src-tauri/Cargo.toml src-tauri/Cargo.lock
 git commit -m "chore: bump version to $NEW_VERSION"
 
 # Create git tag
