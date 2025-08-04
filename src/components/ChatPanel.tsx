@@ -178,8 +178,8 @@ const ChatPanel: Component = () => {
                                 fontWeight="bold"
                               >
                                 Status: {item.status}
-                                <Show when={item.status === TransferStatus.InProgress && item.bytesTransferred && item.fileSize}>
-                                  {` (${Math.round((item.bytesTransferred / item.fileSize) * 100)}%)`}
+                                <Show when={item.status === TransferStatus.InProgress && item.bytesTransferred !== undefined && item.fileSize !== undefined && item.fileSize > 0}>
+                                  {` (${Math.round((item.bytesTransferred! / item.fileSize!) * 100)}%)`}
                                 </Show>
                               </Text>
                             </Show>

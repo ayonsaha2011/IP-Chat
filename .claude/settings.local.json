@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run tauri dev:*)"
+      "Bash(npm run tauri dev:*)",
+      "Bash(pnpm exec tsc:*)",
+      "Bash(pnpm run:*)"
     ],
     "deny": []
   }
