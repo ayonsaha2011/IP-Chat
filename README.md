@@ -1,9 +1,9 @@
 # IP Chat
 
-[![CI](https://github.com/YOUR_USERNAME/ip-chat/workflows/CI/badge.svg)](https://github.com/YOUR_USERNAME/ip-chat/actions/workflows/ci.yml)
-[![Release](https://github.com/YOUR_USERNAME/ip-chat/workflows/Release/badge.svg)](https://github.com/YOUR_USERNAME/ip-chat/actions/workflows/release.yml)
+[![CI](https://github.com/ayonsaha2011/ip-chat/workflows/CI/badge.svg)](https://github.com/ayonsaha2011/ip-chat/actions/workflows/ci.yml)
+[![Release](https://github.com/ayonsaha2011/ip-chat/workflows/Release/badge.svg)](https://github.com/ayonsaha2011/ip-chat/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![GitHub release](https://img.shields.io/github/release/YOUR_USERNAME/ip-chat.svg)](https://github.com/YOUR_USERNAME/ip-chat/releases)
+[![GitHub release](https://img.shields.io/github/release/ayonsaha2011/ip-chat.svg)](https://github.com/ayonsaha2011/ip-chat/releases)
 
 A cross-platform desktop application for local network communication and file sharing. Built with Tauri, Rust, and SolidJS.
 
@@ -23,7 +23,7 @@ A cross-platform desktop application for local network communication and file sh
 
 ### Download Pre-built Binaries
 
-Go to the [Releases](https://github.com/YOUR_USERNAME/ip-chat/releases) page and download the appropriate file for your operating system:
+Go to the [Releases](https://github.com/ayonsaha2011/ip-chat/releases) page and download the appropriate file for your operating system:
 
 #### Windows
 - **Installer**: `ip-chat_vX.X.X_windows_x64.msi`
@@ -109,7 +109,7 @@ Go to the [Releases](https://github.com/YOUR_USERNAME/ip-chat/releases) page and
 
 1. **Clone the repository**:
    ```bash
-   git clone https://github.com/YOUR_USERNAME/ip-chat.git
+   git clone https://github.com/ayonsaha2011/ip-chat.git
    cd ip-chat
    ```
 
@@ -208,8 +208,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🆘 Support
 
-- **Issues**: [GitHub Issues](https://github.com/YOUR_USERNAME/ip-chat/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/YOUR_USERNAME/ip-chat/discussions)
+- **Issues**: [GitHub Issues](https://github.com/ayonsaha2011/ip-chat/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/ayonsaha2011/ip-chat/discussions)
 - **Security**: For security concerns, please email security@yourproject.com
 
 ## 🙏 Acknowledgments

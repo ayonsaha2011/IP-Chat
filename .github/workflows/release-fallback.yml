@@ -38,7 +38,7 @@ jobs:
       uses: softprops/action-gh-release@v2
       env:
         # Use your PAT if you need cross-repo access, otherwise the default workflow
-        # token would also work: secrets.GITHUB_TOKEN
+        # token would also work: secrets.CICD_TOKEN
         GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
         tag_name: ${{ github.event.inputs.version }}
@@ -68,13 +68,17 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: '18'
-        cache: 'npm'
+        cache: 'pnpm'
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: src-tauri
-    - run: npm ci
-    - run: npm run tauri build
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9
+    - run: pnpm install
+    - run: pnpm run tauri build
 
     - name: Upload Windows MSI
       if: needs.create-fallback-release.outputs.upload_url != ''
@@ -97,13 +101,17 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: '18'
-        cache: 'npm'
+        cache: 'pnpm'
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: src-tauri
-    - run: npm ci
-    - run: npm run tauri build
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9
+    - run: pnpm install
+    - run: pnpm run tauri build
 
     - name: Upload macOS DMG
       if: needs.create-fallback-release.outputs.upload_url != ''
@@ -126,7 +134,7 @@ jobs:
     - uses: actions/setup-node@v4
       with:
         node-version: '18'
-        cache: 'npm'
+        cache: 'pnpm'
     - uses: dtolnay/rust-toolchain@stable
     - uses: Swatinem/rust-cache@v2
       with:
@@ -139,8 +147,12 @@ jobs:
           libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev \
           librsvg2-dev patchelf libavahi-client-dev
 
-    - run: npm ci
-    - run: npm run tauri build
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9
+    - run: pnpm install
+    - run: pnpm run tauri build
 
     - name: Upload Linux AppImage
       if: needs.create-fallback-release.outputs.upload_url != ''

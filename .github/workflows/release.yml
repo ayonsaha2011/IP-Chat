@@ -1,9 +1,10 @@
-name: Release
+name: Release (Disabled - Use release-simple.yml)
 
 on:
-  push:
-    tags:
-      - 'v*'
+  # Disabled - use release-simple.yml instead
+  # push:
+  #   tags:
+  #     - 'v*'
   workflow_dispatch:
     inputs:
       version:
