@@ -80,7 +80,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-20.04, windows-latest, macos-latest]
+        platform: [ubuntu-22.04, windows-latest, macos-latest]
         
     runs-on: ${{ matrix.platform }}
     
@@ -108,10 +108,10 @@ jobs:
         workspaces: src-tauri
         
     - name: Install system dependencies (Ubuntu)
-      if: matrix.platform == 'ubuntu-20.04'
+      if: matrix.platform == 'ubuntu-22.04'
       run: |
         sudo apt-get update
-        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev
+        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev build-essential curl wget file
         
     - name: Install frontend dependencies
       run: pnpm install
