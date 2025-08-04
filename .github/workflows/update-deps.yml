@@ -6,6 +6,10 @@ on:
     - cron: '0 9 * * 1'
   workflow_dispatch:
 
+permissions:
+  contents: write
+  pull-requests: write
+
 jobs:
   update-frontend-deps:
     name: Update Frontend Dependencies
@@ -14,16 +18,27 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.CICD_TOKEN }}
       
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: 9
+        
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
         node-version: '18'
+        cache: 'pnpm'
         
-    - name: Update npm dependencies
+    - name: Install dependencies
+      run: pnpm install
+        
+    - name: Update pnpm dependencies
       run: |
-        npm update
-        npm audit fix || true
+        pnpm update
+        pnpm audit fix || true
         
     - name: Create Pull Request
       uses: peter-evans/create-pull-request@v5
@@ -48,6 +63,8 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.CICD_TOKEN }}
       
     - name: Setup Rust
       uses: dtolnay/rust-toolchain@stable
