@@ -435,7 +435,7 @@ async fn send_file_data(
         bytes_sent += bytes_read as u64;
 
         // Update transfer status
-        {
+        let updated_transfer = {
             let mut transfers = transfers.lock().unwrap();
             if let Some(transfer) = transfers.get_mut(&transfer.id) {
                 transfer.bytes_transferred = bytes_sent;
@@ -443,8 +443,14 @@ async fn send_file_data(
                 if bytes_sent >= transfer.file_size {
                     transfer.status = TransferStatus::Completed;
                 }
+                transfer.clone()
+            } else {
+                continue;
             }
-        }
+        };
+
+        // Emit progress event to frontend
+        crate::emit_event("file_transfer_update", updated_transfer);
     }
 
     info!("File transfer completed: {}", transfer.id);
@@ -513,7 +519,7 @@ async fn receive_file_data(
         bytes_received += bytes_read as u64;
 
         // Update transfer status
-        {
+        let updated_transfer = {
             let mut transfers = transfers.lock().unwrap();
             if let Some(transfer) = transfers.get_mut(&transfer.id) {
                 transfer.bytes_transferred = bytes_received;
@@ -521,8 +527,14 @@ async fn receive_file_data(
                 if bytes_received >= transfer.file_size {
                     transfer.status = TransferStatus::Completed;
                 }
+                transfer.clone()
+            } else {
+                continue;
             }
-        }
+        };
+
+        // Emit progress event to frontend
+        crate::emit_event("file_transfer_update", updated_transfer);
     }
 
     info!("File transfer completed: {}", transfer.id);
@@ -587,14 +599,22 @@ async fn handle_file_connection(
                 bytes_received += bytes_read as u64;
 
                 // Update transfer status
-                {
+                let updated_transfer = {
                     let mut transfers = transfers.lock().unwrap();
                     if let Some(transfer) = transfers.get_mut(transfer_id) {
                         transfer.bytes_transferred = bytes_received;
                         if bytes_received >= transfer.file_size {
                             transfer.status = TransferStatus::Completed;
                         }
+                        Some(transfer.clone())
+                    } else {
+                        None
                     }
+                };
+
+                // Emit progress event to frontend
+                if let Some(transfer) = updated_transfer {
+                    crate::emit_event("file_transfer_update", transfer);
                 }
             }
 
