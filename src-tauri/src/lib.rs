@@ -32,7 +32,8 @@ pub fn set_app_handle(handle: AppHandle) {
 // Emit events to frontend
 pub fn emit_event<T: serde::Serialize + Clone>(event: &str, payload: T) {
     unsafe {
-        if let Some(handle) = &APP_HANDLE {
+        let handle_ptr = std::ptr::addr_of!(APP_HANDLE);
+        if let Some(handle) = (*handle_ptr).as_ref() {
             if let Err(e) = handle.emit(event, payload) {
                 error!("Failed to emit event {}: {}", event, e);
             }
