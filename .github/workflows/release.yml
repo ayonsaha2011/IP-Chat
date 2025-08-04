@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Release version (e.g., v1.0.0)'
+        description: 'Release version (e.g., v0.0.1)'
         required: true
         type: string
 
@@ -78,8 +78,10 @@ jobs:
           - 🖥️ **Cross-Platform**: Works on Windows, macOS, and Linux
           
           ### Downloads
-          - **Windows**: Download the `.msi` installer
-          - **macOS**: Download the `.dmg` file (Universal for Apple Silicon and Intel)
+          - **Windows**: Download the `.msi` installer for Windows x64
+          - **macOS**: 
+            - Apple Silicon (M1/M2/M3/M4): Download the `_macos_apple_silicon.dmg` file
+            - Intel: Download the `_macos_intel.dmg` file
           - **Linux**: Download the `.AppImage` (universal) or `.deb` packages
             - Ubuntu 22.04: `ubuntu22.04_amd64.deb`
             - Ubuntu 24.04: `ubuntu24.04_amd64.deb`
@@ -91,12 +93,18 @@ jobs:
           3. Launch IP Chat from your applications menu
           4. Start discovering peers on your local network!
           
-          ### What's New
-          - Initial release of IP Chat
-          - Full local network peer discovery
-          - Real-time messaging capabilities
-          - File transfer functionality
-          - Multi-platform desktop support
+          ### What's New in this First Release
+          🎉 **First Official Release of IP Chat!**
+          
+          - ✨ Complete local network peer discovery system
+          - 💬 Real-time messaging with read receipts and typing indicators
+          - 📁 Drag-and-drop file transfer with progress tracking
+          - 🎨 Modern, responsive UI with dark/light theme support
+          - 🖥️ Native desktop applications for Windows, macOS, and Linux
+          - 🔒 Secure peer-to-peer communication within your local network
+          - ⚙️ Customizable settings and preferences
+          
+          This is the initial stable release ready for production use!
           
         draft: false
         prerelease: false
@@ -418,13 +426,13 @@ jobs:
         # DMG file
         if [ -d "dmg" ]; then
           if [ "${{ matrix.rust-target }}" = "aarch64-apple-darwin" ]; then
-            mv dmg/*.dmg ip-chat_${{ needs.create-release.outputs.version }}_macos_aarch64.dmg
+            mv dmg/*.dmg ip-chat_${{ needs.create-release.outputs.version }}_macos_apple_silicon.dmg
             echo "dmg_created=true" >> $GITHUB_OUTPUT
-            echo "arch=aarch64" >> $GITHUB_OUTPUT
+            echo "arch=apple_silicon" >> $GITHUB_OUTPUT
           else
-            mv dmg/*.dmg ip-chat_${{ needs.create-release.outputs.version }}_macos_x64.dmg
+            mv dmg/*.dmg ip-chat_${{ needs.create-release.outputs.version }}_macos_intel.dmg
             echo "dmg_created=true" >> $GITHUB_OUTPUT
-            echo "arch=x64" >> $GITHUB_OUTPUT
+            echo "arch=intel" >> $GITHUB_OUTPUT
           fi
         fi
         
@@ -443,7 +451,8 @@ jobs:
           src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_arch_x86_64.tar.xz
           src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_windows_x64.msi
           src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_windows_x64_portable.exe
-          src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_macos_*.dmg
+          src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_macos_apple_silicon.dmg
+          src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_macos_intel.dmg
 
   # Summary job to report which builds succeeded/failed
   build-summary:
