@@ -10,6 +10,34 @@
     <key>com.apple.security.files.bookmarks.app-scope</key>
     <true/>
     
+    <!-- Allow access to Downloads directory -->
+    <key>com.apple.security.files.downloads.read-write</key>
+    <true/>
+    
+    <!-- Allow access to Documents directory -->
+    <key>com.apple.security.files.documents.read-write</key>
+    <true/>
+    
+    <!-- Allow access to Desktop directory -->
+    <key>com.apple.security.files.desktop.read-write</key>
+    <true/>
+    
+    <!-- Allow access to Pictures directory -->
+    <key>com.apple.security.files.pictures.read-write</key>
+    <true/>
+    
+    <!-- Allow access to Movies directory -->
+    <key>com.apple.security.files.movies.read-write</key>
+    <true/>
+    
+    <!-- Allow access to Music directory -->
+    <key>com.apple.security.files.music.read-write</key>
+    <true/>
+    
+    <!-- Allow access to all files (read-only) -->
+    <key>com.apple.security.files.all</key>
+    <true/>
+    
     <!-- Allow network access for P2P communication -->
     <key>com.apple.security.network.client</key>
     <true/>
