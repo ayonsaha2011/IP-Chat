@@ -57,7 +57,7 @@ jobs:
         echo "GITHUB_TOKEN length: ${#GITHUB_TOKEN}"
       env:
         CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
-        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         
     - name: Create Release
       id: create_release
