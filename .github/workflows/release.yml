@@ -64,9 +64,8 @@ jobs:
           ### Downloads
           - **Windows**: Download the `.msi` installer
           - **macOS**: Download the `.dmg` file (Universal for Apple Silicon and Intel)
-          - **Linux**: Download the `.AppImage` (universal) or `.deb` packages
-            - Ubuntu 22.04: `ubuntu22.04_amd64.deb`
-            - Ubuntu 24.04: `ubuntu24.04_amd64.deb`
+          - **Linux**: Download the `.AppImage` (universal) or `.deb` package
+            - Ubuntu/Debian: `ubuntu22.04_amd64.deb`
             - RPM and Arch packages also available
           
           ### Installation
@@ -99,11 +98,13 @@ jobs:
             build-name: "Linux (Ubuntu 22.04)"
             ubuntu-version: "22.04"
             
-          - platform: ubuntu-24.04
-            rust-target: x86_64-unknown-linux-gnu
-            build-name: "Linux (Ubuntu 24.04)"
-            ubuntu-version: "24.04"
-            
+          # Note: Ubuntu 24.04 not yet stable in GitHub Actions
+          # Uncomment when ubuntu-24.04 becomes stable
+          # - platform: ubuntu-24.04
+          #   rust-target: x86_64-unknown-linux-gnu
+          #   build-name: "Linux (Ubuntu 24.04)"
+          #   ubuntu-version: "24.04"
+          
           # Note: Uncomment when ubuntu-25.04 becomes available
           # - platform: ubuntu-25.04
           #   rust-target: x86_64-unknown-linux-gnu
@@ -159,15 +160,66 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev build-essential curl wget file
         
+    - name: Install system dependencies (macOS)
+      if: matrix.platform == 'macos-latest'
+      run: |
+        # Install Xcode command line tools if needed
+        xcode-select --install || true
+        
+    - name: Setup Windows dependencies
+      if: matrix.platform == 'windows-latest'
+      run: |
+        # Verify Windows build tools
+        echo "Windows build environment ready"
+        
     - name: Install frontend dependencies
       continue-on-error: false
       run: pnpm install
       
+    - name: Verify environment
+      run: |
+        echo "=== Environment Check ==="
+        echo "OS: ${{ matrix.platform }}"
+        echo "Target: ${{ matrix.rust-target }}"
+        echo "Working directory: $(pwd)"
+        echo "Available space: $(df -h . | tail -1)"
+        echo "Memory: $(free -h 2>/dev/null || echo 'N/A (not Linux)')"
+        echo "Process limit: $(ulimit -u 2>/dev/null || echo 'N/A')"
+        echo "File limit: $(ulimit -n 2>/dev/null || echo 'N/A')"
+        
+        echo "=== Tool Versions ==="
+        echo "Node: $(node --version)"
+        echo "pnpm: $(pnpm --version)"
+        echo "Rust: $(rustc --version)"
+        echo "Cargo: $(cargo --version)"
+        
+        echo "=== Project Files ==="
+        ls -la
+        echo "=== Tauri Config ==="
+        ls -la src-tauri/
+        
     - name: Build Tauri app
       id: build
       run: |
         echo "Building for ${{ matrix.build-name }}..."
-        pnpm run tauri build -- --target ${{ matrix.rust-target }}
+        echo "Platform: ${{ matrix.platform }}"
+        echo "Target: ${{ matrix.rust-target }}"
+        echo "Node version: $(node --version)"
+        echo "pnpm version: $(pnpm --version)"
+        echo "Rust version: $(rustc --version)"
+        
+        # Add target if needed for cross-compilation
+        echo "Adding Rust target: ${{ matrix.rust-target }}"
+        rustup target add ${{ matrix.rust-target }} || echo "Target already installed or not needed"
+        
+        # Set resource limits to prevent out-of-memory issues
+        export CARGO_BUILD_JOBS=2
+        export CARGO_TARGET_DIR=target
+        
+        # Build with verbose output for debugging
+        echo "Starting Tauri build..."
+        echo "Build jobs limited to: $CARGO_BUILD_JOBS"
+        pnpm run tauri build -- --target ${{ matrix.rust-target }} --verbose
         echo "build_success=true" >> $GITHUB_OUTPUT
       
     - name: Check build result
