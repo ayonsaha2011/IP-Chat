@@ -1,7 +1,7 @@
 name: Release Fallback
 
-# This workflow provides a fallback for creating releases if the main release workflow fails
-# It creates basic builds for the most common platforms without advanced error handling
+# This workflow provides a fallback for creating releases if the main release workflow fails.
+# It creates basic builds for the most common platforms without advanced error handling.
 
 on:
   workflow_dispatch:
@@ -31,28 +31,30 @@ jobs:
       release_id: ${{ steps.create_release.outputs.id }}
       upload_url: ${{ steps.create_release.outputs.upload_url }}
       version: ${{ github.event.inputs.version }}
-    
+
     steps:
     - name: Create Release
       id: create_release
       uses: softprops/action-gh-release@v2
+      env:
+        # Use your PAT if you need cross-repo access, otherwise the default workflow
+        # token would also work: secrets.GITHUB_TOKEN
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
-        token: ${{ secrets.CICD_TOKEN }}
         tag_name: ${{ github.event.inputs.version }}
         name: IP Chat ${{ github.event.inputs.version }} (Fallback Build)
         body: |
-          ## IP Chat ${{ github.event.inputs.version }} - Fallback Release
+          ## IP Chat ${{ github.event.inputs.version }} – Fallback Release
           
           This is a fallback release created when the main release workflow encountered issues.
           Basic builds are provided for the most common platforms.
           
           ### Available Downloads
-          - Windows: MSI installer
-          - macOS: DMG file (Intel only in fallback mode)
-          - Linux: AppImage (universal)
+          - **Windows**: MSI installer
+          - **macOS**: DMG file (Intel only in fallback mode)
+          - **Linux**: AppImage (universal)
           
           For full platform support, please wait for the main release workflow to be fixed.
-          
         draft: false
         prerelease: true
 
@@ -60,7 +62,7 @@ jobs:
     name: Build Windows
     needs: create-fallback-release
     runs-on: windows-latest
-    
+
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-node@v4
@@ -71,10 +73,9 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: src-tauri
-        
     - run: npm ci
     - run: npm run tauri build
-    
+
     - name: Upload Windows MSI
       if: needs.create-fallback-release.outputs.upload_url != ''
       uses: actions/upload-release-asset@v1
@@ -90,7 +91,7 @@ jobs:
     name: Build macOS
     needs: create-fallback-release
     runs-on: macos-latest
-    
+
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-node@v4
@@ -101,10 +102,9 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: src-tauri
-        
     - run: npm ci
     - run: npm run tauri build
-    
+
     - name: Upload macOS DMG
       if: needs.create-fallback-release.outputs.upload_url != ''
       uses: actions/upload-release-asset@v1
@@ -120,7 +120,7 @@ jobs:
     name: Build Linux
     needs: create-fallback-release
     runs-on: ubuntu-20.04
-    
+
     steps:
     - uses: actions/checkout@v4
     - uses: actions/setup-node@v4
@@ -131,15 +131,17 @@ jobs:
     - uses: Swatinem/rust-cache@v2
       with:
         workspaces: src-tauri
-        
+
     - name: Install dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev
-        
+        sudo apt-get install -y \
+          libgtk-3-dev libwebkit2gtk-4.0-dev libappindicator3-dev \
+          librsvg2-dev patchelf libavahi-client-dev
+
     - run: npm ci
     - run: npm run tauri build
-    
+
     - name: Upload Linux AppImage
       if: needs.create-fallback-release.outputs.upload_url != ''
       uses: actions/upload-release-asset@v1

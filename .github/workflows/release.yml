@@ -44,8 +44,9 @@ jobs:
     - name: Create Release
       id: create_release
       uses: softprops/action-gh-release@v2
+      env:
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}   # <- your PAT
       with:
-        token: ${{ secrets.CICD_TOKEN }}
         tag_name: ${{ steps.get_version.outputs.version }}
         name: IP Chat ${{ steps.get_version.outputs.version }}
         body: |
@@ -397,7 +398,7 @@ jobs:
         echo "| Platform | Status |" >> $GITHUB_STEP_SUMMARY
         echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
         
-        # Check each job result (this is a simplified example)
+        # Check each job result (simplified)
         echo "Release build completed. Check individual job logs for detailed results."
         echo ""
         echo "Available packages will be uploaded to the GitHub release page."
