@@ -13,6 +13,9 @@ on:
 
 permissions:
   contents: write
+  actions: read
+  issues: write
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -41,11 +44,26 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
         echo "Version: $VERSION"
         
+    - name: Check token availability
+      run: |
+        echo "Checking available tokens..."
+        if [ -n "${{ secrets.CICD_TOKEN }}" ]; then
+          echo "CICD_TOKEN is available (length: ${#CICD_TOKEN})"
+          echo "TOKEN_TO_USE=CICD_TOKEN" >> $GITHUB_ENV
+        else
+          echo "CICD_TOKEN is not available, using GITHUB_TOKEN"
+          echo "TOKEN_TO_USE=GITHUB_TOKEN" >> $GITHUB_ENV
+        fi
+        echo "GITHUB_TOKEN length: ${#GITHUB_TOKEN}"
+      env:
+        CICD_TOKEN: ${{ secrets.CICD_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
+        
     - name: Create Release
       id: create_release
       uses: softprops/action-gh-release@v2
       env:
-        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}   # <- your PAT
+        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
         tag_name: ${{ steps.get_version.outputs.version }}
         name: IP Chat ${{ steps.get_version.outputs.version }}
@@ -223,8 +241,9 @@ jobs:
         Get-ChildItem src-tauri/
       shell: pwsh
         
-    - name: Build Tauri app
-      id: build
+    - name: Build Tauri app (Unix)
+      if: matrix.platform != 'windows-latest'
+      id: build_unix
       run: |
         echo "Building for ${{ matrix.build-name }}..."
         echo "Platform: ${{ matrix.platform }}"
@@ -256,15 +275,52 @@ jobs:
         find src-tauri/target -name "ip-chat*" -type f 2>/dev/null || echo "No ip-chat binaries found"
         echo "Checking for bundles:"
         find src-tauri/target -name "bundle" -type d 2>/dev/null || echo "No bundle directory found"
+        
+    - name: Build Tauri app (Windows)
+      if: matrix.platform == 'windows-latest'
+      id: build_windows
+      run: |
+        Write-Host "Building for ${{ matrix.build-name }}..."
+        Write-Host "Platform: ${{ matrix.platform }}"
+        Write-Host "Target: ${{ matrix.rust-target }}"
+        Write-Host "Node version: $(node --version)"
+        Write-Host "pnpm version: $(pnpm --version)"
+        Write-Host "Rust version: $(rustc --version)"
+        
+        # Add target if needed for cross-compilation
+        Write-Host "Adding Rust target: ${{ matrix.rust-target }}"
+        rustup target add ${{ matrix.rust-target }}
+        if ($LASTEXITCODE -ne 0) { Write-Host "Target already installed or not needed" }
+        
+        # Set resource limits to prevent out-of-memory issues
+        $env:CARGO_BUILD_JOBS = "2"
+        
+        # Build with verbose output for debugging
+        Write-Host "Starting Tauri build..."
+        Write-Host "Build jobs limited to: $($env:CARGO_BUILD_JOBS)"
+        
+        # Build natively on each platform
+        Write-Host "Building natively for ${{ matrix.platform }} (${{ matrix.rust-target }})..."
+        pnpm run tauri build --verbose
+        
+        echo "build_success=true" >> $env:GITHUB_OUTPUT
+        
+        # Debug: Check what files were actually created
+        Write-Host "=== Build artifacts check ==="
+        Write-Host "Checking target directory structure:"
+        Get-ChildItem -Path "src-tauri/target" -Recurse -Filter "ip-chat*" -File -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_.FullName }
+        Write-Host "Checking for bundles:"
+        Get-ChildItem -Path "src-tauri/target" -Recurse -Name "bundle" -Directory -ErrorAction SilentlyContinue | ForEach-Object { Write-Host $_ }
+      shell: pwsh
       
     - name: Check build result
-      if: steps.build.outcome == 'failure'
+      if: (steps.build_unix.outcome == 'failure') || (steps.build_windows.outcome == 'failure')
       run: |
         echo "::warning::Build failed for ${{ matrix.build-name }} - skipping this platform"
         echo "build_success=false" >> $GITHUB_OUTPUT
       
     - name: Prepare release assets (Linux)
-      if: startsWith(matrix.platform, 'ubuntu-') && steps.build.outcome == 'success'
+      if: startsWith(matrix.platform, 'ubuntu-') && steps.build_unix.outcome == 'success'
       continue-on-error: true
       id: prepare_linux
       run: |
@@ -284,7 +340,7 @@ jobs:
         fi
         
     - name: Create RPM package (CentOS/RHEL/Fedora)
-      if: matrix.platform == 'ubuntu-22.04' && steps.build.outcome == 'success'
+      if: matrix.platform == 'ubuntu-22.04' && steps.build_unix.outcome == 'success'
       continue-on-error: true
       id: create_rpm
       run: |
@@ -302,7 +358,7 @@ jobs:
         fi
         
     - name: Create Arch Linux package
-      if: matrix.platform == 'ubuntu-22.04' && steps.build.outcome == 'success'
+      if: matrix.platform == 'ubuntu-22.04' && steps.build_unix.outcome == 'success'
       continue-on-error: true
       id: create_arch
       run: |
@@ -335,7 +391,7 @@ jobs:
         fi
         
     - name: Prepare release assets (Windows)
-      if: matrix.platform == 'windows-latest' && steps.build.outcome == 'success'
+      if: matrix.platform == 'windows-latest' && steps.build_windows.outcome == 'success'
       continue-on-error: true
       id: prepare_windows
       run: |
@@ -354,7 +410,7 @@ jobs:
         }
         
     - name: Prepare release assets (macOS)
-      if: startsWith(matrix.platform, 'macos-') && steps.build.outcome == 'success'
+      if: startsWith(matrix.platform, 'macos-') && steps.build_unix.outcome == 'success'
       continue-on-error: true
       id: prepare_macos
       run: |
