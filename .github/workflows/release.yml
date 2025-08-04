@@ -64,8 +64,9 @@ jobs:
           ### Downloads
           - **Windows**: Download the `.msi` installer
           - **macOS**: Download the `.dmg` file (Universal for Apple Silicon and Intel)
-          - **Linux**: Download the `.AppImage` (universal) or `.deb` package
-            - Ubuntu/Debian: `ubuntu22.04_amd64.deb`
+          - **Linux**: Download the `.AppImage` (universal) or `.deb` packages
+            - Ubuntu 22.04: `ubuntu22.04_amd64.deb`
+            - Ubuntu 24.04: `ubuntu24.04_amd64.deb`
             - RPM and Arch packages also available
           
           ### Installation
@@ -98,14 +99,13 @@ jobs:
             build-name: "Linux (Ubuntu 22.04)"
             ubuntu-version: "22.04"
             
-          # Note: Ubuntu 24.04 not yet stable in GitHub Actions
-          # Uncomment when ubuntu-24.04 becomes stable
-          # - platform: ubuntu-24.04
-          #   rust-target: x86_64-unknown-linux-gnu
-          #   build-name: "Linux (Ubuntu 24.04)"
-          #   ubuntu-version: "24.04"
+          - platform: ubuntu-24.04
+            rust-target: x86_64-unknown-linux-gnu
+            build-name: "Linux (Ubuntu 24.04)"
+            ubuntu-version: "24.04"
           
-          # Note: Uncomment when ubuntu-25.04 becomes available
+          # Note: Ubuntu 25.04 not yet available in GitHub Actions
+          # Will add when available
           # - platform: ubuntu-25.04
           #   rust-target: x86_64-unknown-linux-gnu
           #   build-name: "Linux (Ubuntu 25.04)"
@@ -117,11 +117,11 @@ jobs:
             build-name: "Windows (x64)"
             
           # macOS builds
-          - platform: macos-latest
+          - platform: macos-13
             rust-target: x86_64-apple-darwin
             build-name: "macOS (Intel)"
             
-          - platform: macos-latest
+          - platform: macos-14
             rust-target: aarch64-apple-darwin
             build-name: "macOS (Apple Silicon)"
             
@@ -161,7 +161,7 @@ jobs:
         sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libavahi-client-dev build-essential curl wget file
         
     - name: Install system dependencies (macOS)
-      if: matrix.platform == 'macos-latest'
+      if: startsWith(matrix.platform, 'macos-')
       run: |
         # Install Xcode command line tools if needed
         xcode-select --install || true
@@ -176,7 +176,8 @@ jobs:
       continue-on-error: false
       run: pnpm install
       
-    - name: Verify environment
+    - name: Verify environment (Unix)
+      if: matrix.platform != 'windows-latest'
       run: |
         echo "=== Environment Check ==="
         echo "OS: ${{ matrix.platform }}"
@@ -198,6 +199,30 @@ jobs:
         echo "=== Tauri Config ==="
         ls -la src-tauri/
         
+    - name: Verify environment (Windows)
+      if: matrix.platform == 'windows-latest'
+      run: |
+        Write-Host "=== Environment Check ==="
+        Write-Host "OS: ${{ matrix.platform }}"
+        Write-Host "Target: ${{ matrix.rust-target }}"
+        Write-Host "Working directory: $(Get-Location)"
+        $freeSpace = [math]::Round((Get-PSDrive C).Free/1GB,2)
+        Write-Host "Available space: $freeSpace GB"
+        $totalMemory = [math]::Round((Get-CimInstance -Class Win32_OperatingSystem).TotalVisibleMemorySize/1MB,2)
+        Write-Host "Memory: $totalMemory GB total"
+        
+        Write-Host "=== Tool Versions ==="
+        Write-Host "Node: $(node --version)"
+        Write-Host "pnpm: $(pnpm --version)"
+        Write-Host "Rust: $(rustc --version)"
+        Write-Host "Cargo: $(cargo --version)"
+        
+        Write-Host "=== Project Files ==="
+        Get-ChildItem
+        Write-Host "=== Tauri Config ==="
+        Get-ChildItem src-tauri/
+      shell: pwsh
+        
     - name: Build Tauri app
       id: build
       run: |
@@ -214,13 +239,23 @@ jobs:
         
         # Set resource limits to prevent out-of-memory issues
         export CARGO_BUILD_JOBS=2
-        export CARGO_TARGET_DIR=target
         
         # Build with verbose output for debugging
         echo "Starting Tauri build..."
         echo "Build jobs limited to: $CARGO_BUILD_JOBS"
-        pnpm run tauri build -- --target ${{ matrix.rust-target }} --verbose
+        
+        # Build natively on each platform
+        echo "Building natively for ${{ matrix.platform }} (${{ matrix.rust-target }})..."
+        pnpm run tauri build --verbose
+        
         echo "build_success=true" >> $GITHUB_OUTPUT
+        
+        # Debug: Check what files were actually created
+        echo "=== Build artifacts check ==="
+        echo "Checking target directory structure:"
+        find src-tauri/target -name "ip-chat*" -type f 2>/dev/null || echo "No ip-chat binaries found"
+        echo "Checking for bundles:"
+        find src-tauri/target -name "bundle" -type d 2>/dev/null || echo "No bundle directory found"
       
     - name: Check build result
       if: steps.build.outcome == 'failure'
@@ -233,7 +268,8 @@ jobs:
       continue-on-error: true
       id: prepare_linux
       run: |
-        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        # For native builds, the bundle should be in the default release directory
+        cd src-tauri/target/release/bundle
         
         # AppImage (Universal Linux) - only create from Ubuntu 22.04 to avoid duplicates
         if [ -d "appimage" ] && [ "${{ matrix.platform }}" = "ubuntu-22.04" ]; then
@@ -255,7 +291,7 @@ jobs:
         # Install alien to convert DEB to RPM
         sudo apt-get install -y alien
         
-        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        cd src-tauri/target/release/bundle
         
         if [ -f "ip-chat_${{ needs.create-release.outputs.version }}_ubuntu${{ matrix.ubuntu-version }}_amd64.deb" ]; then
           sudo alien --to-rpm --scripts ip-chat_${{ needs.create-release.outputs.version }}_ubuntu${{ matrix.ubuntu-version }}_amd64.deb
@@ -270,7 +306,7 @@ jobs:
       continue-on-error: true
       id: create_arch
       run: |
-        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        cd src-tauri/target/release/bundle
         
         # Create a simple tar.xz package for Arch Linux
         if [ -f "../ip-chat" ]; then
@@ -303,7 +339,7 @@ jobs:
       continue-on-error: true
       id: prepare_windows
       run: |
-        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        cd src-tauri/target/release/bundle
         
         # MSI installer
         if (Test-Path "msi") {
@@ -318,11 +354,12 @@ jobs:
         }
         
     - name: Prepare release assets (macOS)
-      if: matrix.platform == 'macos-latest' && steps.build.outcome == 'success'
+      if: startsWith(matrix.platform, 'macos-') && steps.build.outcome == 'success'
       continue-on-error: true
       id: prepare_macos
       run: |
-        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
+        # For native builds, the bundle should be in the default release directory
+        cd src-tauri/target/release/bundle
         
         # DMG file
         if [ -d "dmg" ]; then
@@ -346,7 +383,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
         upload_url: ${{ needs.create-release.outputs.upload_url }}
-        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.AppImage
+        asset_path: src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.AppImage
         asset_name: ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.AppImage
         asset_content_type: application/octet-stream
         
@@ -358,7 +395,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
         upload_url: ${{ needs.create-release.outputs.upload_url }}
-        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_ubuntu${{ matrix.ubuntu-version }}_amd64.deb
+        asset_path: src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_ubuntu${{ matrix.ubuntu-version }}_amd64.deb
         asset_name: ip-chat_${{ needs.create-release.outputs.version }}_ubuntu${{ matrix.ubuntu-version }}_amd64.deb
         asset_content_type: application/vnd.debian.binary-package
         
@@ -370,7 +407,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
         upload_url: ${{ needs.create-release.outputs.upload_url }}
-        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.rpm
+        asset_path: src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.rpm
         asset_name: ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.rpm
         asset_content_type: application/x-rpm
         
@@ -382,7 +419,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
         upload_url: ${{ needs.create-release.outputs.upload_url }}
-        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_arch_x86_64.tar.xz
+        asset_path: src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_arch_x86_64.tar.xz
         asset_name: ip-chat_${{ needs.create-release.outputs.version }}_arch_x86_64.tar.xz
         asset_content_type: application/x-xz
         
@@ -395,7 +432,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
         upload_url: ${{ needs.create-release.outputs.upload_url }}
-        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_windows_x64.msi
+        asset_path: src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_windows_x64.msi
         asset_name: ip-chat_${{ needs.create-release.outputs.version }}_windows_x64.msi
         asset_content_type: application/octet-stream
         
@@ -407,7 +444,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
         upload_url: ${{ needs.create-release.outputs.upload_url }}
-        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_windows_x64_portable.exe
+        asset_path: src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_windows_x64_portable.exe
         asset_name: ip-chat_${{ needs.create-release.outputs.version }}_windows_x64_portable.exe
         asset_content_type: application/octet-stream
         
@@ -420,7 +457,7 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
         upload_url: ${{ needs.create-release.outputs.upload_url }}
-        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_macos_${{ steps.prepare_macos.outputs.arch }}.dmg
+        asset_path: src-tauri/target/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_macos_${{ steps.prepare_macos.outputs.arch }}.dmg
         asset_name: ip-chat_${{ needs.create-release.outputs.version }}_macos_${{ steps.prepare_macos.outputs.arch }}.dmg
         asset_content_type: application/octet-stream
 
