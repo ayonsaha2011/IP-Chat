@@ -11,11 +11,7 @@ on:
         required: true
         type: string
 
-permissions:
-  contents: write
-  actions: read
-  issues: write
-  pull-requests: write
+permissions: write-all
 
 env:
   CARGO_TERM_COLOR: always
