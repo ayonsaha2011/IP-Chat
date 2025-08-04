@@ -1,10 +1,9 @@
-name: Release (Disabled - Use release-simple.yml)
+name: Release
 
 on:
-  # Disabled - use release-simple.yml instead
-  # push:
-  #   tags:
-  #     - 'v*'
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
@@ -64,8 +63,11 @@ jobs:
           
           ### Downloads
           - **Windows**: Download the `.msi` installer
-          - **macOS**: Download the `.dmg` file
-          - **Linux**: Download the `.AppImage` or `.deb` package
+          - **macOS**: Download the `.dmg` file (Universal for Apple Silicon and Intel)
+          - **Linux**: Download the `.AppImage` (universal) or `.deb` packages
+            - Ubuntu 22.04: `ubuntu22.04_amd64.deb`
+            - Ubuntu 24.04: `ubuntu24.04_amd64.deb`
+            - RPM and Arch packages also available
           
           ### Installation
           1. Download the appropriate file for your operating system
@@ -94,7 +96,19 @@ jobs:
           # Linux builds
           - platform: ubuntu-22.04
             rust-target: x86_64-unknown-linux-gnu
-            build-name: "Linux (Ubuntu/Debian)"
+            build-name: "Linux (Ubuntu 22.04)"
+            ubuntu-version: "22.04"
+            
+          - platform: ubuntu-24.04
+            rust-target: x86_64-unknown-linux-gnu
+            build-name: "Linux (Ubuntu 24.04)"
+            ubuntu-version: "24.04"
+            
+          # Note: Uncomment when ubuntu-25.04 becomes available
+          # - platform: ubuntu-25.04
+          #   rust-target: x86_64-unknown-linux-gnu
+          #   build-name: "Linux (Ubuntu 25.04)"
+          #   ubuntu-version: "25.04"
             
           # Windows builds
           - platform: windows-latest
@@ -139,7 +153,7 @@ jobs:
         workspaces: src-tauri
         
     - name: Install system dependencies (Ubuntu)
-      if: matrix.platform == 'ubuntu-22.04'
+      if: startsWith(matrix.platform, 'ubuntu-')
       continue-on-error: true
       run: |
         sudo apt-get update
@@ -151,7 +165,6 @@ jobs:
       
     - name: Build Tauri app
       id: build
-      continue-on-error: true
       run: |
         echo "Building for ${{ matrix.build-name }}..."
         pnpm run tauri build -- --target ${{ matrix.rust-target }}
@@ -163,40 +176,27 @@ jobs:
         echo "::warning::Build failed for ${{ matrix.build-name }} - skipping this platform"
         echo "build_success=false" >> $GITHUB_OUTPUT
       
-    - name: Prepare release assets (Linux - Ubuntu 20.04)
-      if: matrix.platform == 'ubuntu-20.04' && steps.build.outcome == 'success'
+    - name: Prepare release assets (Linux)
+      if: startsWith(matrix.platform, 'ubuntu-') && steps.build.outcome == 'success'
       continue-on-error: true
-      id: prepare_linux_20
+      id: prepare_linux
       run: |
         cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
         
-        # AppImage (Universal Linux)
-        if [ -d "appimage" ]; then
+        # AppImage (Universal Linux) - only create from Ubuntu 22.04 to avoid duplicates
+        if [ -d "appimage" ] && [ "${{ matrix.platform }}" = "ubuntu-22.04" ]; then
           mv appimage/*.AppImage ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.AppImage
           echo "appimage_created=true" >> $GITHUB_OUTPUT
         fi
         
-        # Debian package (Ubuntu/Debian)
+        # Debian package (Ubuntu/Debian) - create version-specific packages
         if [ -d "deb" ]; then
-          mv deb/*.deb ip-chat_${{ needs.create-release.outputs.version }}_ubuntu20.04_amd64.deb
-          echo "deb_created=true" >> $GITHUB_OUTPUT
-        fi
-        
-    - name: Prepare release assets (Linux - Ubuntu 22.04)
-      if: matrix.platform == 'ubuntu-22.04' && steps.build.outcome == 'success'
-      continue-on-error: true
-      id: prepare_linux_22
-      run: |
-        cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
-        
-        # Debian package (Ubuntu 22.04+)
-        if [ -d "deb" ]; then
-          mv deb/*.deb ip-chat_${{ needs.create-release.outputs.version }}_ubuntu22.04_amd64.deb
+          mv deb/*.deb ip-chat_${{ needs.create-release.outputs.version }}_ubuntu${{ matrix.ubuntu-version }}_amd64.deb
           echo "deb_created=true" >> $GITHUB_OUTPUT
         fi
         
     - name: Create RPM package (CentOS/RHEL/Fedora)
-      if: matrix.platform == 'ubuntu-20.04' && steps.build.outcome == 'success'
+      if: matrix.platform == 'ubuntu-22.04' && steps.build.outcome == 'success'
       continue-on-error: true
       id: create_rpm
       run: |
@@ -205,8 +205,8 @@ jobs:
         
         cd src-tauri/target/${{ matrix.rust-target }}/release/bundle
         
-        if [ -f "ip-chat_${{ needs.create-release.outputs.version }}_ubuntu20.04_amd64.deb" ]; then
-          sudo alien --to-rpm --scripts ip-chat_${{ needs.create-release.outputs.version }}_ubuntu20.04_amd64.deb
+        if [ -f "ip-chat_${{ needs.create-release.outputs.version }}_ubuntu${{ matrix.ubuntu-version }}_amd64.deb" ]; then
+          sudo alien --to-rpm --scripts ip-chat_${{ needs.create-release.outputs.version }}_ubuntu${{ matrix.ubuntu-version }}_amd64.deb
           if [ -f *.rpm ]; then
             mv *.rpm ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.rpm
             echo "rpm_created=true" >> $GITHUB_OUTPUT
@@ -214,7 +214,7 @@ jobs:
         fi
         
     - name: Create Arch Linux package
-      if: matrix.platform == 'ubuntu-20.04' && steps.build.outcome == 'success'
+      if: matrix.platform == 'ubuntu-22.04' && steps.build.outcome == 'success'
       continue-on-error: true
       id: create_arch
       run: |
@@ -287,7 +287,7 @@ jobs:
         
     # Linux uploads
     - name: Upload Linux AppImage
-      if: steps.prepare_linux_20.outputs.appimage_created == 'true'
+      if: steps.prepare_linux.outputs.appimage_created == 'true'
       continue-on-error: true
       uses: actions/upload-release-asset@v1
       env:
@@ -298,28 +298,16 @@ jobs:
         asset_name: ip-chat_${{ needs.create-release.outputs.version }}_linux_x86_64.AppImage
         asset_content_type: application/octet-stream
         
-    - name: Upload Ubuntu 20.04 DEB
-      if: steps.prepare_linux_20.outputs.deb_created == 'true'
+    - name: Upload Linux DEB
+      if: steps.prepare_linux.outputs.deb_created == 'true'
       continue-on-error: true
       uses: actions/upload-release-asset@v1
       env:
         GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
       with:
         upload_url: ${{ needs.create-release.outputs.upload_url }}
-        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_ubuntu20.04_amd64.deb
-        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_ubuntu20.04_amd64.deb
-        asset_content_type: application/vnd.debian.binary-package
-        
-    - name: Upload Ubuntu 22.04 DEB
-      if: steps.prepare_linux_22.outputs.deb_created == 'true'
-      continue-on-error: true
-      uses: actions/upload-release-asset@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.CICD_TOKEN }}
-      with:
-        upload_url: ${{ needs.create-release.outputs.upload_url }}
-        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_ubuntu22.04_amd64.deb
-        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_ubuntu22.04_amd64.deb
+        asset_path: src-tauri/target/${{ matrix.rust-target }}/release/bundle/ip-chat_${{ needs.create-release.outputs.version }}_ubuntu${{ matrix.ubuntu-version }}_amd64.deb
+        asset_name: ip-chat_${{ needs.create-release.outputs.version }}_ubuntu${{ matrix.ubuntu-version }}_amd64.deb
         asset_content_type: application/vnd.debian.binary-package
         
     - name: Upload RPM Package
