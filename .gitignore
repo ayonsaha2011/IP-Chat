@@ -3,3 +3,9 @@ dist
 bun.lock
 package-lock.json
 dev.log
+.claude
+.vscode
+.idea
+.vscode-test
+.vscode-test-*
+
